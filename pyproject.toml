@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "moka-leave-balance-mcp"
-version = "0.1.0"
-description = "MCP server for querying Moka leave balance metadata"
+version = "0.2.0"
+description = "MCP server for querying Moka employee leave account balances"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -1,20 +1,54 @@
 from __future__ import annotations
 
+import argparse
 import json
-import os
 import ssl
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 MCP_NAME = "moka-leave-balance"
-DEFAULT_HOST = os.getenv("MOKA_HOST", "core.mokahr.com")
-ENDPOINT_PATH = "/client/abs/account/v1/leaveInfo/listAllLeaveBalance"
+DEFAULT_HOST = "core.mokahr.com"
+ENDPOINT_PATH = "/client/abs/account/v1/account/balance_list"
 SUCCESS_CODES = {200, "200", "00000", 1000000, "1000000"}
 
 mcp = FastMCP(MCP_NAME)
+
+
+@dataclass
+class ServerConfig:
+    host: str = DEFAULT_HOST
+    unit_by_leave_rule: bool = False
+    cookie: str | None = None
+    authorization: str | None = None
+
+
+CONFIG = ServerConfig()
+
+
+def _parse_bool(value: str | bool | None) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _configure_from_args() -> None:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--host", default=DEFAULT_HOST)
+    parser.add_argument("--unit-by-leave-rule", default=False)
+    parser.add_argument("--cookie")
+    parser.add_argument("--authorization")
+    args, _ = parser.parse_known_args()
+
+    CONFIG.host = args.host
+    CONFIG.unit_by_leave_rule = _parse_bool(args.unit_by_leave_rule)
+    CONFIG.cookie = args.cookie
+    CONFIG.authorization = args.authorization
 
 
 def _auth_headers(cookie: str | None = None, authorization: str | None = None) -> dict[str, str]:
@@ -22,8 +56,8 @@ def _auth_headers(cookie: str | None = None, authorization: str | None = None) -
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
     }
-    cookie = cookie or os.getenv("MOKA_COOKIE")
-    authorization = authorization or os.getenv("MOKA_AUTHORIZATION")
+    cookie = cookie or CONFIG.cookie
+    authorization = authorization or CONFIG.authorization
     if cookie:
         headers["Cookie"] = cookie
     if authorization:
@@ -48,7 +82,7 @@ def _post_json(
         with urllib.request.urlopen(request, context=ssl.create_default_context(), timeout=30) as resp:
             text = resp.read().decode("utf-8", errors="replace")
             try:
-                data = json.loads(text)
+                data: Any = json.loads(text)
             except json.JSONDecodeError:
                 data = text
             return {"ok": True, "status": resp.status, "response": data, "url": url}
@@ -72,16 +106,23 @@ def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_balance(data: Any, raw: bool) -> dict[str, Any]:
-    body = data if isinstance(data, dict) else {}
-    balance = body.get("balance")
-    legacy_balance = body.get("banlance")
-    output = {
-        "balance": balance if balance is not None else legacy_balance,
-        "legacyField": "banlance" if legacy_balance is not None else None,
+    output: dict[str, Any] = {
+        "ok": True,
+        "leaveBalances": data,
         "sourceEndpoint": ENDPOINT_PATH,
         "fieldMeaning": {
-            "balance": "Map<fieldKey, label>，例如假期余额日报/月报中动态假种余额字段。",
-            "legacyField": "后端 DTO 字段历史拼写为 banlance；MCP 统一输出 balance。",
+            "resultBoList": "员工假期余额列表。",
+            "employeeId": "员工 ID。",
+            "realName": "员工姓名。",
+            "employeeNo": "员工工号。",
+            "absAccountInfoList": "该员工各假期类型的余额。",
+            "absName": "假期类型名称。",
+            "availableBalance": "可用余额。",
+            "effectedAmount": "已生效额度。",
+            "unEffectedAmount": "未生效额度。",
+            "usedAmount": "已使用额度。",
+            "totalAmount": "总额度。",
+            "unit": "余额单位，通常 1=天，2=小时。",
         },
     }
     if raw:
@@ -93,31 +134,35 @@ def _normalize_balance(data: Any, raw: bool) -> dict[str, Any]:
 def query_leave_balance(
     entId: int,
     buId: int,
-    isIncludeDisable: bool = False,
-    isLimited: bool | None = None,
-    host: str = DEFAULT_HOST,
+    employeeIds: list[int],
+    unitByLeaveRule: bool | None = None,
+    host: str | None = None,
     cookie: str | None = None,
     authorization: str | None = None,
     raw: bool = False,
 ) -> dict[str, Any]:
-    """查询 Moka 假期余额动态字段映射。
+    """查询具体员工的 Moka 假期余额。
 
-    底层调用 POST /client/abs/account/v1/leaveInfo/listAllLeaveBalance。
-    可通过参数 cookie / authorization 显式传入认证信息；如果未传，再读取环境变量
-    MOKA_COOKIE / MOKA_AUTHORIZATION。
+    entId、buId、employeeIds 必须由工具调用显式传入；启动参数不提供业务
+    查询条件默认值。
     """
 
-    payload: dict[str, Any] = {
+    resolved_employee_ids = [int(employee_id) for employee_id in employeeIds]
+    resolved_unit_by_leave_rule = CONFIG.unit_by_leave_rule if unitByLeaveRule is None else bool(unitByLeaveRule)
+    resolved_host = host or CONFIG.host
+
+    if not resolved_employee_ids:
+        return {"ok": False, "error": "employeeIds 不能为空；单个员工也请传数组，例如 [123456]"}
+
+    payload = {
         "entId": int(entId),
         "buId": int(buId),
-        "isIncludeDisable": bool(isIncludeDisable),
+        "employeeIds": resolved_employee_ids,
+        "unitByLeaveRule": resolved_unit_by_leave_rule,
     }
-    if isLimited is not None:
-        payload["isLimited"] = bool(isLimited)
-
     result = _extract_data(
         _post_json(
-            host=host,
+            host=resolved_host,
             path=ENDPOINT_PATH,
             payload=payload,
             cookie=cookie,
@@ -128,11 +173,12 @@ def query_leave_balance(
         return result
 
     output = _normalize_balance(result.get("data"), raw=raw)
-    output.update({"ok": True, "request": payload, "host": host})
+    output.update({"request": payload, "host": resolved_host})
     return output
 
 
 def main() -> None:
+    _configure_from_args()
     mcp.run()
 
 

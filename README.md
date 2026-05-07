@@ -1,6 +1,8 @@
 # moka-leave-balance-mcp
 
-面向阿里云百炼 MCP 管理的假期余额查询 MCP 服务。
+面向阿里云百炼 MCP 管理的 Moka 员工假期余额查询服务。
+
+这个版本不走 Moka OpenAPI，不需要 `privateKey`、`entCode`、`apiCode`。它沿用内部 client 接口形式，通过 `entId`、`buId`、`employeeId(s)` 查询具体员工假期余额。
 
 ## 工具
 
@@ -8,85 +10,96 @@
 
 底层接口：
 
-- `POST /client/abs/account/v1/leaveInfo/listAllLeaveBalance`
-
-## 认证方式
-
-推荐在工具调用参数中显式传入认证信息，不自动读取本地：
-
-- `cookie`：Moka 登录态 Cookie，例如 `key=value; key2=value2`
-- `authorization`：如果网关支持 Bearer/内部 Token，可以传完整 Authorization 头值
-
-如果不想每次工具调用都传，也可以用环境变量兜底：
-
-- `MOKA_COOKIE`：Moka 登录态 Cookie，例如 `key=value; key2=value2`
-- `MOKA_AUTHORIZATION`：如果网关支持 Bearer/内部 Token，可以传完整 Authorization 头值
-
-其他可选变量：
-
-- `MOKA_HOST`：默认 `core.mokahr.com`
+- `POST /client/abs/account/v1/account/balance_list`
 
 ## 百炼 uvx 配置
 
-如果这个包已经发布到可被 `uvx` 安装的位置：
+`uvx` 从 GitHub 安装时，建议这样写：
 
 ```json
 {
   "mcpServers": {
     "moka-leave-balance": {
-      "command": "uvx",
-      "args": ["moka-leave-balance-mcp"],
-      "env": {
-        "MOKA_HOST": "core.mokahr.com"
-      }
-    }
-  }
-}
-```
-
-如果使用 Git 仓库地址：
-
-```json
-{
-  "mcpServers": {
-    "moka-leave-balance": {
+      "type": "stdio",
       "command": "uvx",
       "args": [
-        "moka-leave-balance-mcp@git+https://your.git.host/moka-leave-balance-mcp.git"
-      ],
-      "env": {
-        "MOKA_HOST": "core.mokahr.com"
-      }
+        "--from",
+        "git+https://github.com/Sherryruirui/mcp_test.git",
+        "moka-leave-balance-mcp",
+        "--host",
+        "core.mokahr.com"
+      ]
     }
   }
 }
 ```
+
+如果接口需要登录态，也可以把 Cookie 放到启动参数里：
+
+```json
+{
+  "args": [
+    "--from",
+    "git+https://github.com/Sherryruirui/mcp_test.git",
+    "moka-leave-balance-mcp",
+    "--host",
+    "core.mokahr.com",
+    "--cookie",
+    "key=value; key2=value2"
+  ]
+}
+```
+
+## 启动参数
+
+- `--host`：接口域名，默认 `core.mokahr.com`。
+- `--unit-by-leave-rule`：是否按休假规则单位转换额度，默认 `false`。
+- `--cookie`：可选，Moka 登录态 Cookie。
+- `--authorization`：可选，Authorization 头。
 
 ## 工具参数
 
+业务查询条件必须在工具调用时显式传入，不提供启动参数默认值。
+
 ```json
 {
-  "entId": 123,
-  "buId": 456,
-  "isIncludeDisable": false,
-  "isLimited": true,
-  "host": "core.mokahr.com",
-  "cookie": "替换为可访问 Moka 的 Cookie",
-  "authorization": null,
+  "entId": 142,
+  "buId": 45,
+  "employeeIds": [123456],
+  "unitByLeaveRule": false,
   "raw": false
 }
 ```
 
-说明：
+或查询多个员工：
 
-- `entId`：租户 ID，必填。
-- `buId`：BU ID，必填。
-- `isIncludeDisable`：是否包含已停用假期类型，默认 `false`。
-- `isLimited`：是否筛选限额假期，`true` 只查限额，`false` 只查不限额，不传则不过滤。
-- `cookie`：可选，但建议显式传入；传入后优先于环境变量 `MOKA_COOKIE`。
-- `authorization`：可选；传入后优先于环境变量 `MOKA_AUTHORIZATION`。
-- `raw`：是否返回底层接口原始 `data`。
+```json
+{
+  "entId": 142,
+  "buId": 45,
+  "employeeIds": [123456, 234567]
+}
+```
 
-## 注意
+## 返回结构
 
-百炼 MCP 服务部署在阿里云 FC，不在本机运行，所以不能使用本地 Chrome Cookie 文件读取方案。请通过工具参数显式传入 `cookie` / `authorization`，或用环境变量兜底。
+主要字段：
+
+- `leaveBalances.resultBoList`：员工假期余额列表。
+- `employeeId`：员工 ID。
+- `realName`：员工姓名。
+- `employeeNo`：员工工号。
+- `absAccountInfoList`：该员工各假期类型的余额。
+- `absName`：假期类型名称。
+- `availableBalance`：可用余额。
+- `effectedAmount`：已生效额度。
+- `unEffectedAmount`：未生效额度。
+- `usedAmount`：已使用额度。
+- `totalAmount`：总额度。
+- `unit`：余额单位，通常 `1=天`，`2=小时`。
+
+## 本地验证
+
+```bash
+python3 -m py_compile src/moka_leave_balance_mcp/server.py
+```
