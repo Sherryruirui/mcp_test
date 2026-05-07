@@ -14,6 +14,7 @@ MCP_NAME = "moka-leave-balance"
 DEFAULT_HOST = "core.mokahr.com"
 ENDPOINT_PATH = "/client/abs/account/v1/account/balance_list"
 EMPLOYEE_SEARCH_PATH = "/client/v1/hr/employee/v2/searchEmployee"
+ROSTER_EMPLOYEE_INFO_PATH = "/client/v1/roster/allEmployeeInfos"
 SUCCESS_CODES = {200, "200", "00000", 1000000, "1000000"}
 
 mcp = FastMCP(MCP_NAME)
@@ -106,7 +107,116 @@ def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _lookup_employee_ids_by_no(
+def _extract_roster_items(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if not isinstance(data, dict):
+        return []
+
+    for key in ("data", "list", "records", "rows", "items"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+
+    return []
+
+
+def _text_from_employee(item: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = item.get(key)
+        if value:
+            return str(value)
+
+    string_map = item.get("stringMap")
+    if isinstance(string_map, dict):
+        for key in keys:
+            value = string_map.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+def _lookup_employee_ids_by_roster(
+    host: str,
+    ent_id: int,
+    bu_id: int,
+    employee_nos: list[str],
+    cookie: str | None = None,
+    authorization: str | None = None,
+) -> dict[str, Any]:
+    normalized_to_input = {employee_no.strip().lower(): employee_no for employee_no in employee_nos}
+    result = _extract_data(
+        _post_json(
+            host=host,
+            path=ROSTER_EMPLOYEE_INFO_PATH,
+            payload={
+                "entId": int(ent_id),
+                "buId": int(bu_id),
+                "queryFieldList": [
+                    [
+                        {
+                            "biz": "job",
+                            "fieldName": "employee_no",
+                            "compareType": 15,
+                            "queryValueList": employee_nos,
+                        }
+                    ]
+                ],
+                "returnFieldList": [
+                    {"biz": "job", "fieldName": "employee_no"},
+                    {"biz": "baseInfo", "fieldName": "realname"},
+                ],
+                "pageParam": {"pageNum": 1, "pageSize": max(len(employee_nos), 20)},
+            },
+            cookie=cookie,
+            authorization=authorization,
+        )
+    )
+    if not result.get("ok"):
+        return {"ok": False, "error": "花名册按工号查询员工失败", "raw": result}
+
+    items = _extract_roster_items(result.get("data"))
+    employee_ids: list[int] = []
+    details: list[dict[str, Any]] = []
+    matched_nos: set[str] = set()
+
+    for item in items:
+        matched_employee_no = _text_from_employee(item, "job-employee_no", "employeeNo", "employee_no")
+        normalized_employee_no = (matched_employee_no or "").strip().lower()
+        requested_employee_no = normalized_to_input.get(normalized_employee_no)
+        if not requested_employee_no:
+            continue
+
+        employee_id = item.get("employeeId") or item.get("id")
+        if employee_id is None:
+            continue
+
+        matched_nos.add(normalized_employee_no)
+        employee_ids.append(int(employee_id))
+        details.append(
+            {
+                "employeeNo": requested_employee_no,
+                "employeeId": int(employee_id),
+                "realName": _text_from_employee(item, "baseInfo-realname", "realName", "realname", "name"),
+                "matchedEmployeeNo": matched_employee_no,
+            }
+        )
+
+    return {
+        "ok": True,
+        "employeeIds": employee_ids,
+        "notFoundEmployeeNos": [
+            employee_no
+            for employee_no in employee_nos
+            if employee_no.strip().lower() not in matched_nos
+        ],
+        "matchedEmployees": details,
+        "searchDetails": {employee_no: items for employee_no in employee_nos},
+        "sourceEndpoint": ROSTER_EMPLOYEE_INFO_PATH,
+    }
+
+
+def _lookup_employee_ids_by_search(
     host: str,
     ent_id: int,
     bu_id: int,
@@ -117,8 +227,10 @@ def _lookup_employee_ids_by_no(
     employee_ids: list[int] = []
     not_found: list[str] = []
     details: list[dict[str, Any]] = []
+    search_details: dict[str, Any] = {}
 
     for employee_no in employee_nos:
+        normalized_employee_no = employee_no.strip().lower()
         result = _extract_data(
             _post_json(
                 host=host,
@@ -140,10 +252,19 @@ def _lookup_employee_ids_by_no(
 
         data = result.get("data") or {}
         employees = data.get("empList") if isinstance(data, dict) else []
+        search_details[employee_no] = employees or []
         exact_matches = [
             employee for employee in employees or []
-            if str(employee.get("employeeNo", "")).strip() == employee_no
+            if str(
+                employee.get("employeeNo")
+                or employee.get("employee_no")
+                or employee.get("jobEmployeeNo")
+                or employee.get("job_employee_no")
+                or ""
+            ).strip().lower() == normalized_employee_no
         ]
+        if not exact_matches and len(employees or []) == 1:
+            exact_matches = employees
         if not exact_matches:
             not_found.append(employee_no)
             continue
@@ -159,10 +280,55 @@ def _lookup_employee_ids_by_no(
                 "employeeNo": employee_no,
                 "employeeId": int(employee_id),
                 "realName": employee.get("realName") or employee.get("realname") or employee.get("name"),
+                "matchedEmployeeNo": (
+                    employee.get("employeeNo")
+                    or employee.get("employee_no")
+                    or employee.get("jobEmployeeNo")
+                    or employee.get("job_employee_no")
+                ),
             }
         )
 
-    return {"ok": True, "employeeIds": employee_ids, "notFoundEmployeeNos": not_found, "matchedEmployees": details}
+    return {
+        "ok": True,
+        "employeeIds": employee_ids,
+        "notFoundEmployeeNos": not_found,
+        "matchedEmployees": details,
+        "searchDetails": search_details,
+        "sourceEndpoint": EMPLOYEE_SEARCH_PATH,
+    }
+
+
+def _lookup_employee_ids_by_no(
+    host: str,
+    ent_id: int,
+    bu_id: int,
+    employee_nos: list[str],
+    cookie: str | None = None,
+    authorization: str | None = None,
+) -> dict[str, Any]:
+    roster_result = _lookup_employee_ids_by_roster(
+        host=host,
+        ent_id=ent_id,
+        bu_id=bu_id,
+        employee_nos=employee_nos,
+        cookie=cookie,
+        authorization=authorization,
+    )
+    if roster_result.get("ok") and not roster_result.get("notFoundEmployeeNos"):
+        return roster_result
+
+    search_result = _lookup_employee_ids_by_search(
+        host=host,
+        ent_id=ent_id,
+        bu_id=bu_id,
+        employee_nos=employee_nos,
+        cookie=cookie,
+        authorization=authorization,
+    )
+    if search_result.get("ok"):
+        search_result["rosterLookup"] = roster_result
+    return search_result
 
 
 def _normalize_balance(data: Any, raw: bool) -> dict[str, Any]:
@@ -271,6 +437,8 @@ def query_leave_balance(
             "host": resolved_host,
         }
     )
+    if raw:
+        output["employeeSearchDetails"] = lookup_result.get("searchDetails", {})
     return output
 
 

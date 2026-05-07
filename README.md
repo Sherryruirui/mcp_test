@@ -10,7 +10,8 @@
 
 底层接口：
 
-- `POST /client/v1/hr/employee/v2/searchEmployee`：先根据工号查询员工 ID。
+- `POST /client/v1/roster/allEmployeeInfos`：先根据 `job.employee_no` 精确查询员工 ID。
+- `POST /client/v1/hr/employee/v2/searchEmployee`：花名册查询未命中时兜底查询。
 - `POST /client/abs/account/v1/account/balance_list`
 
 ## 百炼 uvx 配置
