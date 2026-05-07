@@ -134,7 +134,8 @@ def _normalize_balance(data: Any, raw: bool) -> dict[str, Any]:
 def query_leave_balance(
     entId: int,
     buId: int,
-    employeeIds: list[int],
+    employeeId: int | None = None,
+    employeeIds: list[int] | None = None,
     unitByLeaveRule: bool | None = None,
     host: str | None = None,
     cookie: str | None = None,
@@ -143,16 +144,20 @@ def query_leave_balance(
 ) -> dict[str, Any]:
     """查询具体员工的 Moka 假期余额。
 
-    entId、buId、employeeIds 必须由工具调用显式传入；启动参数不提供业务
-    查询条件默认值。
+    entId、buId 必须由工具调用显式传入。单个员工传 employeeId，多个员工传
+    employeeIds；启动参数不提供业务查询条件默认值。
     """
 
-    resolved_employee_ids = [int(employee_id) for employee_id in employeeIds]
+    resolved_employee_ids: list[int] = []
+    if employeeId is not None:
+        resolved_employee_ids.append(int(employeeId))
+    if employeeIds:
+        resolved_employee_ids.extend(int(employee_id) for employee_id in employeeIds)
     resolved_unit_by_leave_rule = CONFIG.unit_by_leave_rule if unitByLeaveRule is None else bool(unitByLeaveRule)
     resolved_host = host or CONFIG.host
 
     if not resolved_employee_ids:
-        return {"ok": False, "error": "employeeIds 不能为空；单个员工也请传数组，例如 [123456]"}
+        return {"ok": False, "error": "缺少员工 ID；单个员工传 employeeId，多个员工传 employeeIds"}
 
     payload = {
         "entId": int(entId),

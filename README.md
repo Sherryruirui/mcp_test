@@ -61,11 +61,13 @@
 
 业务查询条件必须在工具调用时显式传入，不提供启动参数默认值。
 
+单个员工：
+
 ```json
 {
   "entId": 142,
   "buId": 45,
-  "employeeIds": [123456],
+  "employeeId": 123456,
   "unitByLeaveRule": false,
   "raw": false
 }
