@@ -2,7 +2,7 @@
 
 面向阿里云百炼 MCP 管理的 Moka 员工假期余额查询服务。
 
-这个版本不走 Moka OpenAPI，不需要 `privateKey`、`entCode`、`apiCode`。它沿用内部 client 接口形式，通过 `entId`、`buId`、`employeeNo(s)` 查询具体员工假期余额。
+这个版本不走 Moka OpenAPI，不需要 `privateKey`、`entCode`、`apiCode`。它沿用 Moka PC 假期账户接口形式，通过 `employeeNo(s)` 查询具体员工假期余额。
 
 ## 工具
 
@@ -10,9 +10,9 @@
 
 底层接口：
 
-- `POST /client/v1/roster/allEmployeeInfos`：先根据 `job.employee_no` 精确查询员工 ID。
-- `POST /client/v1/hr/employee/v2/searchEmployee`：花名册查询未命中时兜底查询。
-- `POST /client/abs/account/v1/account/balance_list`
+- `POST /api/abs/account/v2/account/pc/balanceList`：通过 `userKeyWord=员工工号` 查询员工假期余额。
+
+本地已验证 `Moka0003961` 可返回余额数据，例如年假可用余额 `38.79小时`。
 
 ## 百炼 uvx 配置
 
@@ -36,7 +36,7 @@
 }
 ```
 
-如果接口需要登录态，也可以把 Cookie 放到启动参数里：
+`core.mokahr.com` 的该接口需要登录态。百炼环境无法自动读取你本机 Chrome Cookie，建议把 Cookie 放到启动参数里：
 
 ```json
 {
@@ -62,6 +62,8 @@
 ## 工具参数
 
 业务查询条件必须在工具调用时显式传入，不提供启动参数默认值。
+
+`entId`、`buId` 仍保留为必填参数，便于调用侧固定租户上下文；当前实际查询由登录态和 `employeeNo(s)` 驱动。
 
 单个员工：
 
@@ -89,18 +91,20 @@
 
 主要字段：
 
-- `leaveBalances.resultBoList`：员工假期余额列表。
+- `leaveBalances.columns`：假期类型列，`absId` 与假期名称映射。
+- `leaveBalances.records`：员工假期余额列表。
 - `employeeId`：员工 ID。
 - `realName`：员工姓名。
 - `employeeNo`：员工工号。
-- `absAccountInfoList`：该员工各假期类型的余额。
+- `absAccountInfos`：该员工各假期类型的余额。
 - `absName`：假期类型名称。
 - `availableBalance`：可用余额。
+- `availableBalanceText`：可用余额展示文本。
 - `effectedAmount`：已生效额度。
 - `unEffectedAmount`：未生效额度。
 - `usedAmount`：已使用额度。
 - `totalAmount`：总额度。
-- `unit`：余额单位，通常 `1=天`，`2=小时`。
+- `unit` / `unitText`：余额单位。
 
 ## 本地验证
 

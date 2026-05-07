@@ -12,7 +12,8 @@ from mcp.server.fastmcp import FastMCP
 
 MCP_NAME = "moka-leave-balance"
 DEFAULT_HOST = "core.mokahr.com"
-ENDPOINT_PATH = "/client/abs/account/v1/account/balance_list"
+ENDPOINT_PATH = "/api/abs/account/v2/account/pc/balanceList"
+LEGACY_BALANCE_ENDPOINT_PATH = "/client/abs/account/v1/account/balance_list"
 EMPLOYEE_SEARCH_PATH = "/client/v1/hr/employee/v2/searchEmployee"
 ROSTER_EMPLOYEE_INFO_PATH = "/client/v1/roster/allEmployeeInfos"
 SUCCESS_CODES = {200, "200", "00000", 1000000, "1000000"}
@@ -383,6 +384,85 @@ def _normalize_balance(data: Any, raw: bool) -> dict[str, Any]:
     return output
 
 
+def _map_balance_records(data: Any, employee_nos: list[str]) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "假期余额接口返回结构不是对象", "rawData": data}
+
+    columns = data.get("columns") or []
+    records = data.get("records") or []
+    if not isinstance(columns, list):
+        columns = []
+    if not isinstance(records, list):
+        records = []
+
+    leave_name_by_id = {
+        column.get("absId"): column.get("name")
+        for column in columns
+        if isinstance(column, dict)
+    }
+    requested_nos = {employee_no.strip().lower(): employee_no for employee_no in employee_nos}
+    matched_records: list[dict[str, Any]] = []
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        employee_no = str(record.get("employeeNo") or "").strip()
+        if employee_no.lower() not in requested_nos:
+            continue
+
+        balances: list[dict[str, Any]] = []
+        for balance in record.get("absAccountInfos") or []:
+            if not isinstance(balance, dict):
+                continue
+            abs_id = balance.get("absId")
+            item = dict(balance)
+            item["absName"] = leave_name_by_id.get(abs_id)
+            balances.append(item)
+
+        matched_records.append(
+            {
+                "employeeId": record.get("employeeId"),
+                "realName": record.get("realName"),
+                "employeeNo": employee_no,
+                "absAccountInfos": balances,
+            }
+        )
+
+    found_nos = {str(record.get("employeeNo") or "").strip().lower() for record in matched_records}
+    return {
+        "ok": True,
+        "columns": columns,
+        "records": matched_records,
+        "total": len(matched_records),
+        "notFoundEmployeeNos": [
+            employee_no
+            for employee_no in employee_nos
+            if employee_no.strip().lower() not in found_nos
+        ],
+    }
+
+
+def _query_pc_balance_by_employee_no(
+    host: str,
+    employee_no: str,
+    cookie: str | None = None,
+    authorization: str | None = None,
+) -> dict[str, Any]:
+    return _extract_data(
+        _post_json(
+            host=host,
+            path=ENDPOINT_PATH,
+            payload={
+                "page": 1,
+                "pageSize": 20,
+                "userKeyWord": employee_no,
+            },
+            cookie=cookie,
+            authorization=authorization,
+        )
+    )
+
+
 @mcp.tool()
 def query_leave_balance(
     entId: int,
@@ -398,7 +478,8 @@ def query_leave_balance(
     """查询具体员工的 Moka 假期余额。
 
     entId、buId 必须由工具调用显式传入。单个员工传 employeeNo，多个员工传
-    employeeNos；启动参数不提供业务查询条件默认值。
+    employeeNos；启动参数不提供业务查询条件默认值。当前使用 PC 假期账户
+    余额接口按工号关键字查询。
     """
 
     resolved_employee_nos: list[str] = []
@@ -412,63 +493,72 @@ def query_leave_balance(
     if not resolved_employee_nos:
         return {"ok": False, "error": "缺少员工工号；单个员工传 employeeNo，多个员工传 employeeNos"}
 
-    lookup_result = _lookup_employee_ids_by_no(
-        host=resolved_host,
-        ent_id=entId,
-        bu_id=buId,
-        employee_nos=resolved_employee_nos,
-        cookie=cookie,
-        authorization=authorization,
-    )
-    if not lookup_result.get("ok"):
-        return lookup_result
+    all_records: list[dict[str, Any]] = []
+    all_columns: list[dict[str, Any]] = []
+    not_found: list[str] = []
+    raw_results: dict[str, Any] = {}
 
-    resolved_employee_ids = lookup_result["employeeIds"]
-    if not resolved_employee_ids:
-        output = {
-            "ok": False,
-            "error": "未根据员工工号查询到员工",
-            "notFoundEmployeeNos": lookup_result.get("notFoundEmployeeNos", []),
-        }
-        if raw:
-            output["lookupResult"] = lookup_result
-        return output
-
-    payload = {
-        "entId": int(entId),
-        "buId": int(buId),
-        "employeeIds": resolved_employee_ids,
-        "unitByLeaveRule": resolved_unit_by_leave_rule,
-    }
-    result = _extract_data(
-        _post_json(
+    for employee_no in resolved_employee_nos:
+        result = _query_pc_balance_by_employee_no(
             host=resolved_host,
-            path=ENDPOINT_PATH,
-            payload=payload,
+            employee_no=employee_no,
             cookie=cookie,
             authorization=authorization,
         )
-    )
-    if not result.get("ok"):
-        return result
+        if not result.get("ok"):
+            return {
+                "ok": False,
+                "error": f"查询员工工号 {employee_no} 的假期余额失败",
+                "raw": result,
+            }
+        mapped = _map_balance_records(result.get("data"), [employee_no])
+        if not mapped.get("ok"):
+            return mapped
+        all_records.extend(mapped.get("records", []))
+        if not all_columns:
+            all_columns = mapped.get("columns", [])
+        not_found.extend(mapped.get("notFoundEmployeeNos", []))
+        if raw:
+            raw_results[employee_no] = result.get("data")
 
-    output = _normalize_balance(result.get("data"), raw=raw)
-    output.update(
-        {
-            "request": {
-                "entId": int(entId),
-                "buId": int(buId),
-                "employeeNos": resolved_employee_nos,
-                "employeeIds": resolved_employee_ids,
-                "unitByLeaveRule": resolved_unit_by_leave_rule,
-            },
-            "matchedEmployees": lookup_result.get("matchedEmployees", []),
-            "notFoundEmployeeNos": lookup_result.get("notFoundEmployeeNos", []),
-            "host": resolved_host,
-        }
-    )
+    leave_balances = {
+        "columns": all_columns,
+        "records": all_records,
+        "total": len(all_records),
+    }
+
+    output = {
+        "ok": not not_found,
+        "leaveBalances": leave_balances,
+        "sourceEndpoint": ENDPOINT_PATH,
+        "request": {
+            "entId": int(entId),
+            "buId": int(buId),
+            "employeeNos": resolved_employee_nos,
+            "unitByLeaveRule": resolved_unit_by_leave_rule,
+        },
+        "notFoundEmployeeNos": not_found,
+        "host": resolved_host,
+        "fieldMeaning": {
+            "columns": "假期类型列，absId 与假期名称映射。",
+            "records": "员工假期余额列表。",
+            "employeeId": "员工 ID。",
+            "realName": "员工姓名。",
+            "employeeNo": "员工工号。",
+            "absAccountInfos": "该员工各假期类型的余额。",
+            "absName": "假期类型名称。",
+            "availableBalance": "可用余额。",
+            "availableBalanceText": "可用余额展示文本。",
+            "effectedAmount": "已生效额度。",
+            "unEffectedAmount": "未生效额度。",
+            "usedAmount": "已使用额度。",
+            "totalAmount": "总额度。",
+            "unit": "余额单位。",
+            "unitText": "余额单位展示文本。",
+        },
+    }
     if raw:
-        output["employeeSearchDetails"] = lookup_result.get("searchDetails", {})
+        output["rawData"] = raw_results
     return output
 
 
