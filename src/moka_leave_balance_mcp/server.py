@@ -87,7 +87,13 @@ def _post_json(
                 data: Any = json.loads(text)
             except json.JSONDecodeError:
                 data = text
-            return {"ok": True, "status": resp.status, "response": data, "url": url}
+            return {
+                "ok": True,
+                "status": resp.status,
+                "contentType": resp.headers.get("content-type"),
+                "response": data,
+                "url": url,
+            }
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")[:2000]
         return {"ok": False, "status": exc.code, "error": str(exc), "body": error_body, "url": url}
@@ -104,6 +110,25 @@ def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
         if code in SUCCESS_CODES:
             return {"ok": True, "data": response.get("data"), "raw": response}
         return {"ok": False, "error": f"API failed: code={code}, msg={response.get('msg', '')}", "raw": response}
+    if isinstance(response, str):
+        preview = response[:500]
+        if "<!DOCTYPE html" in preview or "<html" in preview:
+            return {
+                "ok": False,
+                "error": "接口返回 HTML 页面，不是 JSON；通常表示未登录、缺少 Cookie/Authorization，或 host 没有路由到后端接口。",
+                "status": result.get("status"),
+                "contentType": result.get("contentType"),
+                "url": result.get("url"),
+                "responsePreview": preview,
+            }
+        return {
+            "ok": False,
+            "error": "接口返回非 JSON 内容，无法解析。",
+            "status": result.get("status"),
+            "contentType": result.get("contentType"),
+            "url": result.get("url"),
+            "responsePreview": preview,
+        }
     return result
 
 
@@ -328,6 +353,8 @@ def _lookup_employee_ids_by_no(
     )
     if search_result.get("ok"):
         search_result["rosterLookup"] = roster_result
+    elif roster_result:
+        search_result["rosterLookup"] = roster_result
     return search_result
 
 
@@ -398,11 +425,14 @@ def query_leave_balance(
 
     resolved_employee_ids = lookup_result["employeeIds"]
     if not resolved_employee_ids:
-        return {
+        output = {
             "ok": False,
             "error": "未根据员工工号查询到员工",
             "notFoundEmployeeNos": lookup_result.get("notFoundEmployeeNos", []),
         }
+        if raw:
+            output["lookupResult"] = lookup_result
+        return output
 
     payload = {
         "entId": int(entId),
