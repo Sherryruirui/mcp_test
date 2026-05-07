@@ -44,14 +44,25 @@ def _configure_from_args() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--unit-by-leave-rule", default=False)
-    parser.add_argument("--cookie")
+    parser.add_argument("--cookie", nargs="+")
     parser.add_argument("--authorization")
     args, _ = parser.parse_known_args()
 
     CONFIG.host = args.host
     CONFIG.unit_by_leave_rule = _parse_bool(args.unit_by_leave_rule)
-    CONFIG.cookie = args.cookie
+    CONFIG.cookie = _normalize_cookie_arg(args.cookie)
     CONFIG.authorization = args.authorization
+
+
+def _normalize_cookie_arg(value: str | list[str] | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        value = " ".join(value)
+    cookie = str(value).strip()
+    if not cookie:
+        return None
+    return "; ".join(part.strip() for part in cookie.split(";") if part.strip())
 
 
 def _auth_headers(cookie: str | None = None, authorization: str | None = None) -> dict[str, str]:
