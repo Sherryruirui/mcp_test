@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "moka-leave-balance-mcp"
+version = "0.1.0"
+description = "MCP server for querying Moka leave balance metadata"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "mcp>=1.8.0",
+]
+
+[project.scripts]
+moka-leave-balance-mcp = "moka_leave_balance_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/moka_leave_balance_mcp"]
