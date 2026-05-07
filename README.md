@@ -2,7 +2,7 @@
 
 面向阿里云百炼 MCP 管理的 Moka 员工假期余额查询服务。
 
-这个版本不走 Moka OpenAPI，不需要 `privateKey`、`entCode`、`apiCode`。它沿用内部 client 接口形式，通过 `entId`、`buId`、`employeeId(s)` 查询具体员工假期余额。
+这个版本不走 Moka OpenAPI，不需要 `privateKey`、`entCode`、`apiCode`。它沿用内部 client 接口形式，通过 `entId`、`buId`、`employeeNo(s)` 查询具体员工假期余额。
 
 ## 工具
 
@@ -10,6 +10,7 @@
 
 底层接口：
 
+- `POST /client/v1/hr/employee/v2/searchEmployee`：先根据工号查询员工 ID。
 - `POST /client/abs/account/v1/account/balance_list`
 
 ## 百炼 uvx 配置
@@ -67,7 +68,7 @@
 {
   "entId": 142,
   "buId": 45,
-  "employeeId": 123456,
+  "employeeNo": "E001",
   "unitByLeaveRule": false,
   "raw": false
 }
@@ -79,7 +80,7 @@
 {
   "entId": 142,
   "buId": 45,
-  "employeeIds": [123456, 234567]
+  "employeeNos": ["E001", "E002"]
 }
 ```
 

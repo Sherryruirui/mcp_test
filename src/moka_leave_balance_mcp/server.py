@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 MCP_NAME = "moka-leave-balance"
 DEFAULT_HOST = "core.mokahr.com"
 ENDPOINT_PATH = "/client/abs/account/v1/account/balance_list"
+EMPLOYEE_SEARCH_PATH = "/client/v1/hr/employee/v2/searchEmployee"
 SUCCESS_CODES = {200, "200", "00000", 1000000, "1000000"}
 
 mcp = FastMCP(MCP_NAME)
@@ -105,6 +106,65 @@ def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _lookup_employee_ids_by_no(
+    host: str,
+    ent_id: int,
+    bu_id: int,
+    employee_nos: list[str],
+    cookie: str | None = None,
+    authorization: str | None = None,
+) -> dict[str, Any]:
+    employee_ids: list[int] = []
+    not_found: list[str] = []
+    details: list[dict[str, Any]] = []
+
+    for employee_no in employee_nos:
+        result = _extract_data(
+            _post_json(
+                host=host,
+                path=EMPLOYEE_SEARCH_PATH,
+                payload={
+                    "entId": int(ent_id),
+                    "buId": int(bu_id),
+                    "searchText": employee_no,
+                    "pageIndex": 1,
+                    "pageSize": 20,
+                    "auth": False,
+                },
+                cookie=cookie,
+                authorization=authorization,
+            )
+        )
+        if not result.get("ok"):
+            return {"ok": False, "error": f"查询员工工号 {employee_no} 失败", "raw": result}
+
+        data = result.get("data") or {}
+        employees = data.get("empList") if isinstance(data, dict) else []
+        exact_matches = [
+            employee for employee in employees or []
+            if str(employee.get("employeeNo", "")).strip() == employee_no
+        ]
+        if not exact_matches:
+            not_found.append(employee_no)
+            continue
+
+        employee = exact_matches[0]
+        employee_id = employee.get("employeeId") or employee.get("id")
+        if employee_id is None:
+            not_found.append(employee_no)
+            continue
+        employee_ids.append(int(employee_id))
+        details.append(
+            {
+                "employeeNo": employee_no,
+                "employeeId": int(employee_id),
+                "realName": employee.get("realName") or employee.get("realname") or employee.get("name"),
+            }
+        )
+
+    return {"ok": True, "employeeIds": employee_ids, "notFoundEmployeeNos": not_found, "matchedEmployees": details}
+
+
 def _normalize_balance(data: Any, raw: bool) -> dict[str, Any]:
     output: dict[str, Any] = {
         "ok": True,
@@ -134,8 +194,8 @@ def _normalize_balance(data: Any, raw: bool) -> dict[str, Any]:
 def query_leave_balance(
     entId: int,
     buId: int,
-    employeeId: int | None = None,
-    employeeIds: list[int] | None = None,
+    employeeNo: str | None = None,
+    employeeNos: list[str] | None = None,
     unitByLeaveRule: bool | None = None,
     host: str | None = None,
     cookie: str | None = None,
@@ -144,20 +204,39 @@ def query_leave_balance(
 ) -> dict[str, Any]:
     """查询具体员工的 Moka 假期余额。
 
-    entId、buId 必须由工具调用显式传入。单个员工传 employeeId，多个员工传
-    employeeIds；启动参数不提供业务查询条件默认值。
+    entId、buId 必须由工具调用显式传入。单个员工传 employeeNo，多个员工传
+    employeeNos；启动参数不提供业务查询条件默认值。
     """
 
-    resolved_employee_ids: list[int] = []
-    if employeeId is not None:
-        resolved_employee_ids.append(int(employeeId))
-    if employeeIds:
-        resolved_employee_ids.extend(int(employee_id) for employee_id in employeeIds)
+    resolved_employee_nos: list[str] = []
+    if employeeNo:
+        resolved_employee_nos.append(str(employeeNo).strip())
+    if employeeNos:
+        resolved_employee_nos.extend(str(employee_no).strip() for employee_no in employeeNos if str(employee_no).strip())
     resolved_unit_by_leave_rule = CONFIG.unit_by_leave_rule if unitByLeaveRule is None else bool(unitByLeaveRule)
     resolved_host = host or CONFIG.host
 
+    if not resolved_employee_nos:
+        return {"ok": False, "error": "缺少员工工号；单个员工传 employeeNo，多个员工传 employeeNos"}
+
+    lookup_result = _lookup_employee_ids_by_no(
+        host=resolved_host,
+        ent_id=entId,
+        bu_id=buId,
+        employee_nos=resolved_employee_nos,
+        cookie=cookie,
+        authorization=authorization,
+    )
+    if not lookup_result.get("ok"):
+        return lookup_result
+
+    resolved_employee_ids = lookup_result["employeeIds"]
     if not resolved_employee_ids:
-        return {"ok": False, "error": "缺少员工 ID；单个员工传 employeeId，多个员工传 employeeIds"}
+        return {
+            "ok": False,
+            "error": "未根据员工工号查询到员工",
+            "notFoundEmployeeNos": lookup_result.get("notFoundEmployeeNos", []),
+        }
 
     payload = {
         "entId": int(entId),
@@ -178,7 +257,20 @@ def query_leave_balance(
         return result
 
     output = _normalize_balance(result.get("data"), raw=raw)
-    output.update({"request": payload, "host": resolved_host})
+    output.update(
+        {
+            "request": {
+                "entId": int(entId),
+                "buId": int(buId),
+                "employeeNos": resolved_employee_nos,
+                "employeeIds": resolved_employee_ids,
+                "unitByLeaveRule": resolved_unit_by_leave_rule,
+            },
+            "matchedEmployees": lookup_result.get("matchedEmployees", []),
+            "notFoundEmployeeNos": lookup_result.get("notFoundEmployeeNos", []),
+            "host": resolved_host,
+        }
+    )
     return output
 
 
