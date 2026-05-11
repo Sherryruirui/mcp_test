@@ -78,6 +78,31 @@
 - `search_approval_instances`：搜索审批实例摘要。
 - `list_approval_instances`：查询审批实例列表摘要。
 
+薪酬：
+
+- `query_my_payroll_list`：先检查“我的薪酬”入口，再查询当前员工工资条列表。
+- `query_payslip_detail`：先检查入口，再查询工资条详情。
+- `query_payslip_employee_info`：先检查入口，再查询工资条员工基础信息。
+- `query_payslip_multi_info`：先检查入口，再查询工资单当月多笔信息。
+- `query_payslip_hidden_status`：先检查入口，再查询工资单数字隐藏状态。
+- `query_my_salary_info`：先检查入口，再查询当前员工薪资信息。
+- `query_my_salary_available_items`：先检查入口，再查询我的薪酬可用功能项。
+- `query_my_salary_display_config`：先检查入口，再查询我的薪酬展示配置。
+- `query_salary_archive_info`：先检查入口，再查询员工薪资档案详情。
+- `query_salary_archive_change_history`：先检查入口，再查询薪资档案变更历史。
+- `query_salary_employee_info`：先检查入口，再查询员工薪资相关基础信息。
+- `query_personal_tax_reports`：先检查入口，再查询员工个税记录/报送列表。
+- `query_personal_tax_search_factors`：先检查入口，再查询个税筛选项。
+- `query_annual_bonus_tax_detail`：先检查入口，再查询全年一次性奖金个税明细。
+- `query_equity_incentive_tax_detail`：先检查入口，再查询股权激励收入个税明细。
+- `query_incentive_activity_list`：先检查入口，再查询奖金/调薪激励活动列表。
+- `query_incentive_activity_info`：先检查入口，再查询奖金/调薪激励活动详情。
+- `query_incentive_employee_info`：先检查入口，再查询奖金/调薪活动中的员工信息。
+- `query_adjust_salary_detail`：先检查入口，再查询员工调薪明细。
+- `query_incentive_employee_growth_records`：先检查入口，再查询激励/调薪员工成长记录。
+- `query_adjust_salary_chart_tags`：先检查入口，再查询调薪对比图标签。
+- `query_adjust_salary_chart`：先检查入口，再查询调薪对比图数据。
+
 社保公积金：
 
 - `query_social_fund_file_info`：先检查员工自助是否开放社保/公积金/福利入口，再查询当前员工社保公积金档案信息。
@@ -86,8 +111,7 @@
 
 ## 暂未实现
 
-- 工资条、工资、个税、奖金、调薪明细查询：目前只实现了“我的薪酬”入口可见性检查。参考资料里没有确认稳定的员工端只读查询接口，所以未直接封装业务数据查询。
-- 薪资管理员接口、HR 档案接口、配置写入接口：这些不是员工自助只读能力，未封装。
+- 薪酬配置写入、薪资发放、工资条发送、个税报送、奖金/调薪活动创建或编辑：这些是写操作或管理员操作，未封装。
 - 入职自助 no-token 链路：需要 obId/token 类上下文，和当前 Cookie 员工自助链路不同，暂未放进这个包。
 
 ## 本地验证

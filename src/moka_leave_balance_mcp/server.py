@@ -48,6 +48,30 @@ PATH_FLOWINST_LIST_BRIEF = "/api/workflowplatform/flowInst/list/brief"
 PATH_SELF_SERVICE_MOBILE_LIST = "/api/universal/v1/self-service/mobile/list"
 PATH_SELF_SERVICE_HOME_LIST = "/api/universal/v1/self-service/home/list"
 PATH_SELF_SERVICE_COMMON_USE = "/api/universal/v1/self-service/listForCommonUse"
+
+PATH_MY_PAYROLL_LIST = "/api/salary/v1/payroll/emp/payrollList"
+PATH_MY_SALARY_INFO = "/api/salary/v1/payroll/emp/salaryInfo"
+PATH_PAYROLL_AVAILABLE_ITEM = "/api/salary/v1/payroll/setting/availableItem"
+PATH_PAYROLL_EMP_MULTI_INFO = "/api/salary/v1/payroll/emp/multiInfo"
+PATH_PAYROLL_EMP_PASS_HIDDEN = "/api/salary/v1/payroll/emp/pass/hidden"
+PATH_PAYROLL_EMP_DISPLAY_CONFIG = "/api/salary/v1/payroll/emp/display/config/get"
+PATH_PAYSLIP_EMP_INFO = "/api/salary/v1/temp/getEmpInfo"
+PATH_PAYSLIP_DETAIL = "/api/salary/v1/temp/fill/temp"
+PATH_TAX_STAFF_REPORT_SEARCH = "/api/salary/v1/tax/staffReport/search"
+PATH_TAX_STAFF_REPORT_SEARCH_FACTOR = "/api/salary/v1/tax/staffReport/searchFactor"
+PATH_TAX_BONUS_WHOLE_YEAR_INCOME = "/api/salary/v1/tax/collect/report/selectWholeYearIncome"
+PATH_TAX_EQUITY_INCENTIVE_INCOME = "/api/salary/v1/tax/collect/report/selectEquityIncentivesIncome"
+PATH_SALARY_ARCHIVES_INFO = "/api/salary/v1/archives/page/info"
+PATH_SALARY_ARCHIVES_FIELD_CHANGE = "/api/salary/v1/archives/page/filed/change"
+PATH_SALARY_EMPLOYEE_INFO = "/api/salary/v1/employee/info"
+PATH_INCENTIVE_ACTIVITY_LIST = "/api/salary/v1/incentive/activity/list"
+PATH_INCENTIVE_ACTIVITY_INFO = "/api/salary/v1/incentive/activity/info"
+PATH_INCENTIVE_EMPLOYEE_INFO = "/api/salary/v1/incentive/employee/info"
+PATH_INCENTIVE_EMPLOYEE_ADJUST_DETAIL = "/api/salary/v1/incentive/employee/table/adjustDetail"
+PATH_INCENTIVE_EMPLOYEE_GROWTH_RECORDS = "/api/salary/v1/incentive/employee/growth/listRecord"
+PATH_INCENTIVE_ADJUST_CHART_TAGS = "/api/salary/v1/incentive/statistics/adjustChart/Tag"
+PATH_INCENTIVE_ADJUST_CHART = "/api/salary/v1/incentive/statistics/adjustChart"
+
 PATH_WELFARE_FILE_INFO = "/api/welfare/v1/mobile/fileInfo"
 PATH_WELFARE_HISTORY_PAY = "/api/welfare/v1/mobile/history/pay"
 PATH_WELFARE_HISTORY_PAY_DETAIL = "/api/welfare/v1/mobile/history/pay/detail"
@@ -465,6 +489,14 @@ def _guarded_sensitive_query(
     if not check.get("visible"):
         return {"ok": False, "error": "员工自助未开放该功能入口，未继续查询敏感信息。", "capabilityCheck": check}
     return None
+
+
+def _guard_salary_query(
+    host: str,
+    cookie: str | list[str] | None,
+    authorization: str | None,
+) -> dict[str, Any] | None:
+    return _guarded_sensitive_query(host, cookie, authorization, list(SALARY_KEYWORDS))
 
 
 def _raw_endpoint_output(
@@ -1208,6 +1240,603 @@ def list_candidate_employees(
     if raw:
         output["raw"] = result.get("raw")
     return output
+
+
+@mcp.tool()
+def query_my_payroll_list(
+    entId: int,
+    buId: int,
+    cookie: str,
+    totalMonth: int | None = None,
+    thisYear: bool | None = None,
+    uuid: str | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询当前员工工资条列表。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"uuid": uuid, "totalMonth": totalMonth, "thisYear": thisYear}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_MY_PAYROLL_LIST, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_my_salary_info(
+    entId: int,
+    buId: int,
+    cookie: str,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询当前员工薪资信息。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_MY_SALARY_INFO, params=params, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_my_salary_available_items(
+    entId: int,
+    buId: int,
+    cookie: str,
+    uuid: str | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询我的薪酬内可用功能项。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"uuid": uuid}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_PAYROLL_AVAILABLE_ITEM, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_payslip_detail(
+    entId: int,
+    buId: int,
+    cookie: str,
+    payrollDetailId: int | None = None,
+    uuid: str | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询当前员工工资条详情。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"uuid": uuid, "payrollDetailId": payrollDetailId}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_PAYSLIP_DETAIL, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_payslip_employee_info(
+    entId: int,
+    buId: int,
+    cookie: str,
+    uuid: str | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询工资条员工基础信息。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"uuid": uuid}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_PAYSLIP_EMP_INFO, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_payslip_multi_info(
+    entId: int,
+    buId: int,
+    cookie: str,
+    payrollDetailId: int | None = None,
+    uuid: str | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询工资单当月多笔信息。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"uuid": uuid, "payrollDetailId": payrollDetailId}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_PAYROLL_EMP_MULTI_INFO, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_payslip_hidden_status(
+    entId: int,
+    buId: int,
+    cookie: str,
+    uuid: str | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询工资单数字隐藏状态。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"uuid": uuid}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_PAYROLL_EMP_PASS_HIDDEN, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_my_salary_display_config(
+    entId: int,
+    buId: int,
+    cookie: str,
+    scene: str | int | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询我的薪酬展示配置。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"scene": scene}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_PAYROLL_EMP_DISPLAY_CONFIG, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_salary_archive_info(
+    entId: int,
+    buId: int,
+    cookie: str,
+    employeeNo: str | None = None,
+    employeeId: int | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询员工薪资档案详情。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    if not employee.get("ok"):
+        return employee
+    query = _merge_payload({"id": employee["employeeId"]}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_SALARY_ARCHIVES_INFO, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_salary_archive_change_history(
+    entId: int,
+    buId: int,
+    cookie: str,
+    employeeNo: str | None = None,
+    employeeId: int | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询员工薪资档案变更历史。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    if not employee.get("ok"):
+        return employee
+    query = _merge_payload({"employeeId": employee["employeeId"]}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_SALARY_ARCHIVES_FIELD_CHANGE, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_salary_employee_info(
+    entId: int,
+    buId: int,
+    cookie: str,
+    employeeNo: str | None = None,
+    employeeId: int | None = None,
+    payload: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询员工薪资相关基础信息。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    if not employee.get("ok"):
+        return employee
+    body = _merge_payload({"employeeId": employee["employeeId"]}, payload)
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_SALARY_EMPLOYEE_INFO, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_personal_tax_reports(
+    entId: int,
+    buId: int,
+    cookie: str,
+    employeeNo: str | None = None,
+    employeeId: int | None = None,
+    salaryYearAndMonth: str | None = None,
+    taxBelong: str | None = None,
+    pageNumber: int = 1,
+    pageSize: int = 20,
+    payload: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询员工个税人员报送/个税记录列表。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    if not employee.get("ok"):
+        return employee
+    body = _merge_payload(
+        {
+            "salaryYearAndMonth": salaryYearAndMonth,
+            "taxBelong": taxBelong,
+            "employeeIdList": [employee["employeeId"]],
+            "pageNumber": pageNumber,
+            "pageSize": pageSize,
+        },
+        payload,
+    )
+    body = {key: value for key, value in body.items() if value is not None}
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_TAX_STAFF_REPORT_SEARCH, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_personal_tax_search_factors(
+    entId: int,
+    buId: int,
+    cookie: str,
+    salaryYearAndMonth: str,
+    taxBelong: str,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询个税筛选项。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"salaryYearAndMonth": salaryYearAndMonth, "taxBelong": taxBelong}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_TAX_STAFF_REPORT_SEARCH_FACTOR, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_annual_bonus_tax_detail(
+    entId: int,
+    buId: int,
+    cookie: str,
+    id: str | int,
+    declarationId: str | int,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询全年一次性奖金个税明细。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"id": id, "declarationId": declarationId}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_TAX_BONUS_WHOLE_YEAR_INCOME, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_equity_incentive_tax_detail(
+    entId: int,
+    buId: int,
+    cookie: str,
+    id: str | int,
+    declarationId: str | int,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询股权激励收入个税明细。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    query = _merge_payload({"id": id, "declarationId": declarationId}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_TAX_EQUITY_INCENTIVE_INCOME, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_incentive_activity_list(
+    entId: int,
+    buId: int,
+    cookie: str,
+    keyword: str | None = None,
+    status: int | None = None,
+    pageNum: int = 1,
+    pageSize: int = 20,
+    payload: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询奖金/调薪激励活动列表。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    body = _merge_payload({"pageNum": pageNum, "pageSize": pageSize, "keyword": keyword, "status": status}, payload)
+    body = {key: value for key, value in body.items() if value is not None}
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_INCENTIVE_ACTIVITY_LIST, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_incentive_activity_info(
+    entId: int,
+    buId: int,
+    cookie: str,
+    activityId: str | int,
+    payload: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询奖金/调薪激励活动详情。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    body = _merge_payload({"activityId": activityId}, payload)
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_INCENTIVE_ACTIVITY_INFO, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_incentive_employee_info(
+    entId: int,
+    buId: int,
+    cookie: str,
+    activityId: str | int,
+    employeeNo: str | None = None,
+    employeeId: int | None = None,
+    payload: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询奖金/调薪活动中的员工信息。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    if not employee.get("ok"):
+        return employee
+    body = _merge_payload({"activityId": activityId, "employeeId": employee["employeeId"]}, payload)
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_INCENTIVE_EMPLOYEE_INFO, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_adjust_salary_detail(
+    entId: int,
+    buId: int,
+    cookie: str,
+    activityId: str | int,
+    type: str | int,
+    employeeNo: str | None = None,
+    employeeId: int | None = None,
+    params: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询员工调薪明细。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    if not employee.get("ok"):
+        return employee
+    query = _merge_payload({"activityId": activityId, "employeeId": employee["employeeId"], "type": type}, params)
+    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_INCENTIVE_EMPLOYEE_ADJUST_DETAIL, params=query, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_incentive_employee_growth_records(
+    entId: int,
+    buId: int,
+    cookie: str,
+    employeeNo: str | None = None,
+    employeeId: int | None = None,
+    activityId: str | int | None = None,
+    payload: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询激励/调薪员工成长记录。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    if not employee.get("ok"):
+        return employee
+    body = _merge_payload({"activityId": activityId, "employeeId": employee["employeeId"]}, payload)
+    body = {key: value for key, value in body.items() if value is not None}
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_INCENTIVE_EMPLOYEE_GROWTH_RECORDS, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_adjust_salary_chart_tags(
+    entId: int,
+    buId: int,
+    cookie: str,
+    employeeNo: str | None = None,
+    employeeId: int | None = None,
+    activityId: str | int | None = None,
+    payload: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询调薪对比图标签。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    if not employee.get("ok"):
+        return employee
+    body = _merge_payload({"activityId": activityId, "employeeId": employee["employeeId"]}, payload)
+    body = {key: value for key, value in body.items() if value is not None}
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_INCENTIVE_ADJUST_CHART_TAGS, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+
+
+@mcp.tool()
+def query_adjust_salary_chart(
+    entId: int,
+    buId: int,
+    cookie: str,
+    employeeNo: str | None = None,
+    employeeId: int | None = None,
+    activityId: str | int | None = None,
+    tag: str | None = None,
+    payload: dict[str, Any] | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """先检查“我的薪酬”入口，再查询调薪对比图数据。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    blocker = _guard_salary_query(resolved_host, cookie, authorization)
+    if blocker:
+        return blocker
+    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    if not employee.get("ok"):
+        return employee
+    body = _merge_payload({"activityId": activityId, "employeeId": employee["employeeId"], "tag": tag}, payload)
+    body = {key: value for key, value in body.items() if value is not None}
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_INCENTIVE_ADJUST_CHART, payload=body, cookie=cookie, authorization=authorization, raw=raw)
 
 
 @mcp.tool()
