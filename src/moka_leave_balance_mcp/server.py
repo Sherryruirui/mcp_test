@@ -268,11 +268,51 @@ def _pick_employee_id(value: Any) -> int | None:
     return None
 
 
-def _resolve_current_employee_id(host: str, cookie: str | list[str] | None, authorization: str | None) -> int | None:
+def _pick_text(value: Any, keys: tuple[str, ...]) -> str | None:
+    if isinstance(value, dict):
+        for key in keys:
+            item = value.get(key)
+            if item not in (None, ""):
+                return str(item)
+        for child in value.values():
+            found = _pick_text(child, keys)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _pick_text(child, keys)
+            if found:
+                return found
+    return None
+
+
+def _current_employee(
+    host: str,
+    cookie: str | list[str] | None,
+    authorization: str | None,
+) -> dict[str, Any]:
     result = _extract_data(_post_json(host, PATH_CURRENT_USER, {}, cookie=cookie, authorization=authorization))
     if not result.get("ok"):
+        return {"ok": False, "error": "无法从当前登录态解析当前员工", "raw": result}
+    data = result.get("data")
+    employee_id = _pick_employee_id(data)
+    if employee_id is None:
+        return {"ok": False, "error": "当前用户信息中未找到 employeeId", "raw": result}
+    return {
+        "ok": True,
+        "employeeId": employee_id,
+        "employeeNo": _pick_text(data, ("employeeNo", "employee_no", "jobEmployeeNo", "job_employee_no")),
+        "realName": _pick_text(data, ("realName", "realname", "name")),
+        "sourceEndpoint": PATH_CURRENT_USER,
+        "raw": result,
+    }
+
+
+def _resolve_current_employee_id(host: str, cookie: str | list[str] | None, authorization: str | None) -> int | None:
+    current = _current_employee(host, cookie, authorization)
+    if not current.get("ok"):
         return None
-    return _pick_employee_id(result.get("data"))
+    return current.get("employeeId")
 
 
 def _map_balance_records(data: Any, employee_nos: list[str]) -> dict[str, Any]:
@@ -355,20 +395,86 @@ def _resolve_employee_by_no(
     cookie: str | list[str] | None,
     authorization: str | None,
 ) -> dict[str, Any]:
+    lookup_errors: list[dict[str, Any]] = []
     result = _query_pc_balance_by_employee_no(host, employee_no, cookie=cookie, authorization=authorization)
-    if not result.get("ok"):
-        return {"ok": False, "error": f"按员工工号 {employee_no} 查询员工失败", "raw": result}
-    mapped = _map_balance_records(result.get("data"), [employee_no])
-    if not mapped.get("ok") or not mapped.get("records"):
-        return {"ok": False, "error": "未根据员工工号查询到员工", "notFoundEmployeeNos": [employee_no], "raw": mapped}
-    record = mapped["records"][0]
+    if result.get("ok"):
+        mapped = _map_balance_records(result.get("data"), [employee_no])
+        if mapped.get("ok") and mapped.get("records"):
+            record = mapped["records"][0]
+            return {
+                "ok": True,
+                "employeeId": record.get("employeeId"),
+                "employeeNo": record.get("employeeNo"),
+                "realName": record.get("realName"),
+                "sourceEndpoint": PATH_LEAVE_BALANCE,
+            }
+        lookup_errors.append({"sourceEndpoint": PATH_LEAVE_BALANCE, "raw": mapped})
+    else:
+        lookup_errors.append({"sourceEndpoint": PATH_LEAVE_BALANCE, "raw": result})
+
+    search_result = _resolve_employee_by_search(host, employee_no, cookie, authorization)
+    if search_result.get("ok"):
+        search_result["lookupWarnings"] = lookup_errors
+        return search_result
+    lookup_errors.append(search_result)
+
+    current = _current_employee(host, cookie, authorization)
+    if current.get("ok"):
+        current_no = str(current.get("employeeNo") or "").strip().lower()
+        requested_no = employee_no.strip().lower()
+        if not current_no or current_no == requested_no:
+            return {
+                "ok": True,
+                "employeeId": current["employeeId"],
+                "employeeNo": current.get("employeeNo") or employee_no,
+                "realName": current.get("realName"),
+                "sourceEndpoint": PATH_CURRENT_USER,
+                "lookupWarnings": lookup_errors,
+                "warning": "按工号查询失败，已回退到当前登录用户身份。若要查非本人，请直接传 employeeId。",
+            }
+
     return {
-        "ok": True,
-        "employeeId": record.get("employeeId"),
-        "employeeNo": record.get("employeeNo"),
-        "realName": record.get("realName"),
-        "sourceEndpoint": PATH_LEAVE_BALANCE,
+        "ok": False,
+        "error": f"按员工工号 {employee_no} 查询员工失败",
+        "notFoundEmployeeNos": [employee_no],
+        "lookupErrors": lookup_errors,
     }
+
+
+def _resolve_employee_by_search(
+    host: str,
+    employee_no: str,
+    cookie: str | list[str] | None,
+    authorization: str | None,
+) -> dict[str, Any]:
+    payloads = [
+        {"keyword": employee_no, "searchText": employee_no, "page": 1, "pageIndex": 1, "pageSize": 20},
+        {"keyword": employee_no, "page": 1, "pageIndex": 1, "pageSize": 20},
+        {"searchText": employee_no, "page": 1, "pageIndex": 1, "pageSize": 20},
+    ]
+    errors: list[dict[str, Any]] = []
+    requested_no = employee_no.strip().lower()
+    for payload in payloads:
+        result = _extract_data(_post_json(host, PATH_EMPLOYEE_SEARCH, payload, cookie=cookie, authorization=authorization))
+        if not result.get("ok"):
+            errors.append({"payload": payload, "raw": result})
+            continue
+        for item in _iter_dicts(result.get("data")):
+            candidate_no = _pick_text(item, ("employeeNo", "employee_no", "jobEmployeeNo", "job_employee_no"))
+            if candidate_no and candidate_no.strip().lower() != requested_no:
+                continue
+            employee_id = _pick_employee_id(item)
+            if employee_id is None:
+                continue
+            return {
+                "ok": True,
+                "employeeId": employee_id,
+                "employeeNo": candidate_no or employee_no,
+                "realName": _pick_text(item, ("realName", "realname", "name")),
+                "sourceEndpoint": PATH_EMPLOYEE_SEARCH,
+            }
+        errors.append({"payload": payload, "raw": result, "error": "未在员工搜索结果中匹配到工号"})
+    return {"ok": False, "error": "员工搜索接口未根据工号查询到员工", "sourceEndpoint": PATH_EMPLOYEE_SEARCH, "lookupErrors": errors}
 
 
 def _resolve_employee_id(
