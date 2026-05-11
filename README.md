@@ -36,27 +36,13 @@
 }
 ```
 
-`core.mokahr.com` 的该接口需要登录态。百炼环境无法自动读取你本机 Chrome Cookie，建议把 Cookie 放到启动参数里：
-
-```json
-{
-  "args": [
-    "--from",
-    "git+https://github.com/Sherryruirui/mcp_test.git",
-    "moka-leave-balance-mcp",
-    "--host",
-    "core.mokahr.com",
-    "--cookie",
-    "key=value; key2=value2"
-  ]
-}
-```
+`core.mokahr.com` 的该接口需要登录态。百炼环境无法自动读取你本机 Chrome Cookie，建议把 Cookie 作为工具参数传入，而不是启动参数。
 
 ## 启动参数
 
 - `--host`：接口域名，默认 `core.mokahr.com`。
 - `--unit-by-leave-rule`：是否按休假规则单位转换额度，默认 `false`。
-- `--cookie`：可选，Moka 登录态 Cookie。
+- `--cookie`：可选，Moka 登录态 Cookie；更推荐在工具调用参数里传 `cookie`。
 - `--authorization`：可选，Authorization 头。
 
 ## 工具参数
@@ -72,6 +58,7 @@
   "entId": 142,
   "buId": 45,
   "employeeNo": "E001",
+  "cookie": "moka-jwt=xxx;moka-uid=xxx",
   "unitByLeaveRule": false,
   "raw": false
 }
@@ -83,9 +70,18 @@
 {
   "entId": 142,
   "buId": 45,
-  "employeeNos": ["E001", "E002"]
+  "employeeNos": ["E001", "E002"],
+  "cookie": "moka-jwt=xxx;moka-uid=xxx"
 }
 ```
+
+`cookie` 可以传完整浏览器 Cookie，也可以只传关键登录态 Cookie。实测至少需要 `moka-jwt` 和 `moka-uid`：
+
+```text
+moka-jwt=xxx;moka-uid=xxx
+```
+
+如果复制的是浏览器完整 Cookie，分号后有空格也可以，MCP 会自动规范化为可用格式。
 
 ## 返回结构
 

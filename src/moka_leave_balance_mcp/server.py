@@ -70,7 +70,7 @@ def _auth_headers(cookie: str | None = None, authorization: str | None = None) -
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
     }
-    cookie = cookie or CONFIG.cookie
+    cookie = _normalize_cookie_arg(cookie) or CONFIG.cookie
     authorization = authorization or CONFIG.authorization
     if cookie:
         headers["Cookie"] = cookie
