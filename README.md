@@ -69,6 +69,12 @@
 - `query_attendance_calendar`：查询考勤日历日详情或月列表。
 - `query_profile_attendance_calendar`：查询档案页考勤日历。
 
+出勤日历参数说明：
+
+- 查月出勤：`query_attendance_calendar` 需要 `year` + `monthNumber`，也可以传 `month="YYYY-MM"`。
+- 查某一天：传 `clockInDate="YYYY-MM-DD"` 或 `date="YYYY-MM-DD"`。
+- 如果缺少必填参数，MCP 会返回 `missingRequiredParams` 和示例参数，调用侧应继续追问用户补充。
+
 员工信息：
 
 - `search_colleague_basic`：搜索同事基础信息，只返回姓名、工号、部门、职位、办公地、头像、直属上级等基础字段。

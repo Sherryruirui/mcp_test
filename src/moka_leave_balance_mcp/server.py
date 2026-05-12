@@ -7,6 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import date as date_type
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -314,6 +315,37 @@ def _merge_payload(base: dict[str, Any], extra: dict[str, Any] | None) -> dict[s
     if extra:
         merged.update(extra)
     return merged
+
+
+def _missing_params_error(tool: str, missing: list[str], message: str, examples: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": message,
+        "tool": tool,
+        "missingRequiredParams": missing,
+        "askUserFor": missing,
+        "examples": examples or [],
+    }
+
+
+def _parse_year_month(month_value: str | None) -> tuple[int | None, int | None]:
+    if not month_value:
+        return None, None
+    text = str(month_value).strip()
+    if not text:
+        return None, None
+    if "-" in text:
+        parts = text.split("-")
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            return int(parts[0]), int(parts[1])
+    if len(text) == 6 and text.isdigit():
+        return int(text[:4]), int(text[4:])
+    return None, None
+
+
+def _today_year_month() -> tuple[int, int]:
+    today = date_type.today()
+    return today.year, today.month
 
 
 def _require_cookie(cookie: str | list[str] | None) -> dict[str, Any] | None:
@@ -1153,12 +1185,16 @@ def query_attendance_calendar(
     employeeId: int | None = None,
     date: str | None = None,
     month: str | None = None,
+    year: int | None = None,
+    monthNumber: int | None = None,
+    clockInDate: str | None = None,
+    useCurrentMonthWhenMissing: bool = False,
     payload: dict[str, Any] | None = None,
     host: str | None = None,
     authorization: str | None = None,
     raw: bool = False,
 ) -> dict[str, Any]:
-    """查询员工考勤日历。传 date 查询某天详情，传 month 查询月列表。"""
+    """查询员工考勤日历。传 clockInDate/date 查询某天详情；传 year+monthNumber 或 month=YYYY-MM 查询月列表。"""
 
     missing = _require_cookie(cookie)
     if missing:
@@ -1167,8 +1203,32 @@ def query_attendance_calendar(
     employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
     if not employee.get("ok"):
         return employee
-    path = PATH_ATTENDANCE_CALENDAR_DETAIL if date else PATH_ATTENDANCE_CALENDAR_LIST
-    body = _merge_payload({"employeeId": employee["employeeId"], "date": date, "month": month}, payload)
+    resolved_date = clockInDate or date
+    if resolved_date:
+        path = PATH_ATTENDANCE_CALENDAR_DETAIL
+        body = _merge_payload({"employeeId": employee["employeeId"], "clockInDate": resolved_date}, payload)
+        body = {key: value for key, value in body.items() if value is not None}
+        return _raw_endpoint_output(host=resolved_host, method="POST", path=path, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+
+    parsed_year, parsed_month = _parse_year_month(month)
+    resolved_year = year or parsed_year
+    resolved_month = monthNumber or parsed_month
+    if (resolved_year is None or resolved_month is None) and useCurrentMonthWhenMissing:
+        resolved_year, resolved_month = _today_year_month()
+    if resolved_year is None or resolved_month is None:
+        return _missing_params_error(
+            tool="query_attendance_calendar",
+            missing=["year", "monthNumber"],
+            message="查询月出勤日历需要明确年份和月份。请补充 year 和 monthNumber，或传 month=YYYY-MM；如果要查某一天，请传 clockInDate/date=YYYY-MM-DD。",
+            examples=[
+                {"year": 2026, "monthNumber": 5},
+                {"month": "2026-05"},
+                {"clockInDate": "2026-05-12"},
+            ],
+        )
+
+    path = PATH_ATTENDANCE_CALENDAR_LIST
+    body = _merge_payload({"employeeId": employee["employeeId"], "year": resolved_year, "month": resolved_month, "inApproval": False}, payload)
     body = {key: value for key, value in body.items() if value is not None}
     return _raw_endpoint_output(host=resolved_host, method="POST", path=path, payload=body, cookie=cookie, authorization=authorization, raw=raw)
 
