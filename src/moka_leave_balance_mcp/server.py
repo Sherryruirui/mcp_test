@@ -35,6 +35,7 @@ PATH_JOB_INFO = "/api/personnel/v1/jobInfo/tab/pc/info"
 PATH_EMPLOYEE_INFO = "/api/core/v1/hr/employee/getEmployeeInfo"
 PATH_EMPLOYEE_SEARCH = "/api/aggregate/v1/search/employee"
 PATH_EMPLOYEE_LIST = "/api/core/v1/hr/employee/getList"
+PATH_ROSTER_LIST = "/api/core/v1/hr/roster/rosterList"
 PATH_ORG_STAFF_INFO = "/api/organization/v1/hr/staff/info"
 PATH_CANDIDATE_EMPLOYEE_LIST = "/api/workflowplatform/candidate/employee/list"
 
@@ -136,6 +137,7 @@ ENDPOINT_CAPABILITIES = {
     PATH_ORG_STAFF_INFO: "colleague",
     PATH_EMPLOYEE_SEARCH: "colleague",
     PATH_EMPLOYEE_LIST: "colleague",
+    PATH_ROSTER_LIST: "colleague",
     PATH_CANDIDATE_EMPLOYEE_LIST: "colleague",
     PATH_PENDING_APPROVALS: "approval",
     PATH_APPROVAL_DETAIL: "approval",
@@ -387,6 +389,19 @@ def _pick_text(value: Any, keys: tuple[str, ...]) -> str | None:
     return None
 
 
+def _api_error_code(result: dict[str, Any]) -> Any:
+    raw = result.get("raw")
+    if isinstance(raw, dict):
+        return raw.get("code")
+    return None
+
+
+def _is_auth_context_error(result: dict[str, Any]) -> bool:
+    code = _api_error_code(result)
+    message = str(result.get("error") or "")
+    return code in {100007, "100007"} or "获取用户信息失败" in message or "未登录" in message or "登录" in message and "失败" in message
+
+
 def _current_employee(
     host: str,
     cookie: str | list[str] | None,
@@ -531,20 +546,27 @@ def _resolve_employee_by_search(
     cookie: str | list[str] | None,
     authorization: str | None,
 ) -> dict[str, Any]:
-    payloads = [
-        {"keyword": employee_no, "searchText": employee_no, "page": 1, "pageIndex": 1, "pageSize": 20},
-        {"keyword": employee_no, "page": 1, "pageIndex": 1, "pageSize": 20},
-        {"searchText": employee_no, "page": 1, "pageIndex": 1, "pageSize": 20},
+    requests = [
+        (PATH_ROSTER_LIST, {"rosterType": 1, "page": 1, "pageSize": 20, "keywords": employee_no}),
+        (PATH_ROSTER_LIST, {"rosterType": 2, "page": 1, "pageSize": 20, "keywords": employee_no}),
+        (PATH_EMPLOYEE_LIST, {"keyword": employee_no, "page": 1, "pageSize": 20}),
+        (PATH_EMPLOYEE_LIST, {"keywords": employee_no, "page": 1, "pageSize": 20}),
+        (PATH_EMPLOYEE_SEARCH, {"keywords": employee_no, "page": 1, "pageIndex": 1, "pageSize": 20}),
+        (PATH_EMPLOYEE_SEARCH, {"keyword": employee_no, "searchText": employee_no, "page": 1, "pageIndex": 1, "pageSize": 20}),
     ]
     errors: list[dict[str, Any]] = []
     requested_no = employee_no.strip().lower()
-    for payload in payloads:
-        result = _extract_data(_post_json(host, PATH_EMPLOYEE_SEARCH, payload, cookie=cookie, authorization=authorization))
+    auth_errors: list[dict[str, Any]] = []
+    for path, payload in requests:
+        result = _extract_data(_post_json(host, path, payload, cookie=cookie, authorization=authorization))
         if not result.get("ok"):
-            errors.append({"payload": payload, "raw": result})
+            error = {"sourceEndpoint": path, "payload": payload, "raw": result}
+            errors.append(error)
+            if _is_auth_context_error(result):
+                auth_errors.append(error)
             continue
         for item in _iter_dicts(result.get("data")):
-            candidate_no = _pick_text(item, ("employeeNo", "employee_no", "jobEmployeeNo", "job_employee_no"))
+            candidate_no = _pick_text(item, ("employeeNo", "employee_no", "jobEmployeeNo", "job_employee_no", "job-employee_no"))
             if candidate_no and candidate_no.strip().lower() != requested_no:
                 continue
             employee_id = _pick_employee_id(item)
@@ -555,10 +577,18 @@ def _resolve_employee_by_search(
                 "employeeId": employee_id,
                 "employeeNo": candidate_no or employee_no,
                 "realName": _pick_text(item, ("realName", "realname", "name")),
-                "sourceEndpoint": PATH_EMPLOYEE_SEARCH,
+                "sourceEndpoint": path,
             }
-        errors.append({"payload": payload, "raw": result, "error": "未在员工搜索结果中匹配到工号"})
-    return {"ok": False, "error": "员工搜索接口未根据工号查询到员工", "sourceEndpoint": PATH_EMPLOYEE_SEARCH, "lookupErrors": errors}
+        errors.append({"sourceEndpoint": path, "payload": payload, "raw": result, "error": "未在员工搜索结果中匹配到工号"})
+    if auth_errors and len(auth_errors) == len([error for error in errors if error.get("raw")]):
+        return {
+            "ok": False,
+            "error": "员工解析失败：当前 cookie/登录态无法在员工搜索接口中获取用户信息。请在百炼工具参数中传入有效的 Moka 登录 Cookie，或直接传 employeeId。",
+            "sourceEndpoint": "employee_resolver",
+            "authContextError": True,
+            "lookupErrors": errors,
+        }
+    return {"ok": False, "error": "员工搜索接口未根据工号查询到员工", "sourceEndpoint": "employee_resolver", "lookupErrors": errors}
 
 
 def _resolve_employee_by_business_search(
