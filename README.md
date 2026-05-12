@@ -37,6 +37,16 @@
 
 完整浏览器 Cookie 也可以，MCP 会自动把 `;` 后的空格规范化。
 
+## 查询流程
+
+所有业务查询统一走同一条管线：
+
+1. 用通用员工搜索/当前用户接口将 `employeeNo` 解析为 `employeeId`。
+2. 查询员工自助配置，判断当前业务入口是否配置为员工可见。
+3. 未配置员工可见时直接阻断，返回“当前信息不可查询”；配置可见后才调用具体业务接口。
+
+可单独调用 `resolve_employee_id_by_no` 调试工号到 `employeeId` 的解析结果。
+
 ## 已支持工具
 
 身份与配置：
@@ -44,6 +54,7 @@
 - `query_current_user`：查询当前 Cookie 对应的登录用户/员工身份。
 - `check_employee_self_service_capability`：查询员工自助入口是否开放，例如“我的薪酬”“社保公积金”“假期”。
 - `check_salary_self_service_enabled`：专门检查“我的薪酬/工资条/薪资”入口是否可见。
+- `resolve_employee_id_by_no`：通用地将员工工号解析为 `employeeId`。
 
 假勤：
 

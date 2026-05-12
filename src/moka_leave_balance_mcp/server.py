@@ -100,6 +100,75 @@ COLLEAGUE_BASIC_KEYS = {
 
 SALARY_KEYWORDS = ("我的薪酬", "薪酬", "工资", "工资条", "薪资")
 SOCIAL_FUND_KEYWORDS = ("社保公积金", "社保", "公积金", "福利")
+BUSINESS_CAPABILITY_KEYWORDS = {
+    "profile": ("个人档案", "我的档案", "个人信息", "任职信息", "员工档案", "人事档案"),
+    "attendance": ("假期", "假期余额", "请假", "休假", "考勤", "打卡"),
+    "approval": ("审批", "待办", "流程"),
+    "colleague": ("通讯录", "同事", "员工信息", "组织架构", "找人"),
+    "salary": SALARY_KEYWORDS,
+    "social_fund": SOCIAL_FUND_KEYWORDS,
+}
+BUSINESS_CAPABILITY_LABELS = {
+    "profile": "个人档案/个人信息",
+    "attendance": "假期/考勤",
+    "approval": "审批",
+    "colleague": "同事基础信息",
+    "salary": "我的薪酬",
+    "social_fund": "社保公积金",
+}
+ENDPOINT_CAPABILITIES = {
+    PATH_LEAVE_BALANCE: "attendance",
+    PATH_LEAVE_ACCOUNT_DETAIL: "attendance",
+    PATH_LEAVE_RECORDS: "attendance",
+    PATH_LEAVE_SEND_RECORDS: "attendance",
+    PATH_LEAVE_USE_RECORDS: "attendance",
+    PATH_CLOCK_RECORDS: "attendance",
+    PATH_ATTENDANCE_CALENDAR_DETAIL: "attendance",
+    PATH_ATTENDANCE_CALENDAR_LIST: "attendance",
+    PATH_ATTENDANCE_CALENDAR_PROFILE: "attendance",
+    PATH_EMP_ACCOUNT_INFO: "attendance",
+    PATH_LEAVE_TYPES: "attendance",
+    PATH_PROFILE_DETAIL: "profile",
+    PATH_STAFF_INFO: "profile",
+    PATH_JOB_INFO: "profile",
+    PATH_EMPLOYEE_INFO: "profile",
+    PATH_ORG_STAFF_INFO: "colleague",
+    PATH_EMPLOYEE_SEARCH: "colleague",
+    PATH_EMPLOYEE_LIST: "colleague",
+    PATH_CANDIDATE_EMPLOYEE_LIST: "colleague",
+    PATH_PENDING_APPROVALS: "approval",
+    PATH_APPROVAL_DETAIL: "approval",
+    PATH_FLOW_DETAIL_PC: "approval",
+    PATH_FLOW_TASK_DETAILS: "approval",
+    PATH_APPROVAL_FORM_DATA: "approval",
+    PATH_FLOWINST_SEARCH_BRIEF: "approval",
+    PATH_FLOWINST_LIST_BRIEF: "approval",
+    PATH_MY_PAYROLL_LIST: "salary",
+    PATH_MY_SALARY_INFO: "salary",
+    PATH_PAYROLL_AVAILABLE_ITEM: "salary",
+    PATH_PAYROLL_EMP_MULTI_INFO: "salary",
+    PATH_PAYROLL_EMP_PASS_HIDDEN: "salary",
+    PATH_PAYROLL_EMP_DISPLAY_CONFIG: "salary",
+    PATH_PAYSLIP_EMP_INFO: "salary",
+    PATH_PAYSLIP_DETAIL: "salary",
+    PATH_TAX_STAFF_REPORT_SEARCH: "salary",
+    PATH_TAX_STAFF_REPORT_SEARCH_FACTOR: "salary",
+    PATH_TAX_BONUS_WHOLE_YEAR_INCOME: "salary",
+    PATH_TAX_EQUITY_INCENTIVE_INCOME: "salary",
+    PATH_SALARY_ARCHIVES_INFO: "salary",
+    PATH_SALARY_ARCHIVES_FIELD_CHANGE: "salary",
+    PATH_SALARY_EMPLOYEE_INFO: "salary",
+    PATH_INCENTIVE_ACTIVITY_LIST: "salary",
+    PATH_INCENTIVE_ACTIVITY_INFO: "salary",
+    PATH_INCENTIVE_EMPLOYEE_INFO: "salary",
+    PATH_INCENTIVE_EMPLOYEE_ADJUST_DETAIL: "salary",
+    PATH_INCENTIVE_EMPLOYEE_GROWTH_RECORDS: "salary",
+    PATH_INCENTIVE_ADJUST_CHART_TAGS: "salary",
+    PATH_INCENTIVE_ADJUST_CHART: "salary",
+    PATH_WELFARE_FILE_INFO: "social_fund",
+    PATH_WELFARE_HISTORY_PAY: "social_fund",
+    PATH_WELFARE_HISTORY_PAY_DETAIL: "social_fund",
+}
 
 mcp = FastMCP(MCP_NAME)
 
@@ -396,25 +465,8 @@ def _resolve_employee_by_no(
     authorization: str | None,
 ) -> dict[str, Any]:
     lookup_errors: list[dict[str, Any]] = []
-    result = _query_pc_balance_by_employee_no(host, employee_no, cookie=cookie, authorization=authorization)
-    if result.get("ok"):
-        mapped = _map_balance_records(result.get("data"), [employee_no])
-        if mapped.get("ok") and mapped.get("records"):
-            record = mapped["records"][0]
-            return {
-                "ok": True,
-                "employeeId": record.get("employeeId"),
-                "employeeNo": record.get("employeeNo"),
-                "realName": record.get("realName"),
-                "sourceEndpoint": PATH_LEAVE_BALANCE,
-            }
-        lookup_errors.append({"sourceEndpoint": PATH_LEAVE_BALANCE, "raw": mapped})
-    else:
-        lookup_errors.append({"sourceEndpoint": PATH_LEAVE_BALANCE, "raw": result})
-
     search_result = _resolve_employee_by_search(host, employee_no, cookie, authorization)
     if search_result.get("ok"):
-        search_result["lookupWarnings"] = lookup_errors
         return search_result
     lookup_errors.append(search_result)
 
@@ -422,7 +474,7 @@ def _resolve_employee_by_no(
     if current.get("ok"):
         current_no = str(current.get("employeeNo") or "").strip().lower()
         requested_no = employee_no.strip().lower()
-        if not current_no or current_no == requested_no:
+        if current_no == requested_no:
             return {
                 "ok": True,
                 "employeeId": current["employeeId"],
@@ -430,7 +482,7 @@ def _resolve_employee_by_no(
                 "realName": current.get("realName"),
                 "sourceEndpoint": PATH_CURRENT_USER,
                 "lookupWarnings": lookup_errors,
-                "warning": "按工号查询失败，已回退到当前登录用户身份。若要查非本人，请直接传 employeeId。",
+                "warning": "通用员工搜索未命中，已回退到当前登录用户身份。若要查非本人，请直接传 employeeId。",
             }
 
     return {
@@ -475,6 +527,17 @@ def _resolve_employee_by_search(
             }
         errors.append({"payload": payload, "raw": result, "error": "未在员工搜索结果中匹配到工号"})
     return {"ok": False, "error": "员工搜索接口未根据工号查询到员工", "sourceEndpoint": PATH_EMPLOYEE_SEARCH, "lookupErrors": errors}
+
+
+def _resolve_employee_by_business_search(
+    host: str,
+    employee_no: str,
+    cookie: str | list[str] | None,
+    authorization: str | None,
+) -> dict[str, Any]:
+    """Public resolver used by business tools after visibility is confirmed."""
+
+    return _resolve_employee_by_search(host, employee_no, cookie, authorization)
 
 
 def _resolve_employee_id(
@@ -605,6 +668,63 @@ def _guard_salary_query(
     return _guarded_sensitive_query(host, cookie, authorization, list(SALARY_KEYWORDS))
 
 
+def _guard_business_capability(
+    host: str,
+    cookie: str | list[str] | None,
+    authorization: str | None,
+    capability: str,
+) -> dict[str, Any] | None:
+    keywords = list(BUSINESS_CAPABILITY_KEYWORDS.get(capability, (capability,)))
+    check = _check_capability_keywords(host, cookie, authorization, keywords)
+    if not check.get("ok"):
+        return {
+            "ok": False,
+            "error": f"查询{BUSINESS_CAPABILITY_LABELS.get(capability, capability)}员工可见性配置失败，未继续查询业务数据。",
+            "capability": capability,
+            "capabilityCheck": check,
+        }
+    if not check.get("visible"):
+        return {
+            "ok": False,
+            "error": f"当前员工自助未配置员工可见：{BUSINESS_CAPABILITY_LABELS.get(capability, capability)}，当前信息不可查询。",
+            "capability": capability,
+            "capabilityCheck": check,
+        }
+    return None
+
+
+def _prepare_business_query(
+    *,
+    host: str,
+    cookie: str | list[str] | None,
+    authorization: str | None,
+    capability: str,
+    employee_id: int | None = None,
+    employee_no: str | None = None,
+    require_employee: bool = True,
+) -> dict[str, Any]:
+    if not require_employee:
+        blocker = _guard_business_capability(host, cookie, authorization, capability)
+        if blocker:
+            return blocker
+        return {"ok": True, "capability": capability}
+    employee = _resolve_employee_id(host, cookie, authorization, employee_id=employee_id, employee_no=employee_no)
+    if not employee.get("ok"):
+        employee["capability"] = capability
+        return employee
+    blocker = _guard_business_capability(host, cookie, authorization, capability)
+    if blocker:
+        blocker["employee"] = {
+            "employeeId": employee.get("employeeId"),
+            "employeeNo": employee.get("employeeNo"),
+            "realName": employee.get("realName"),
+            "sourceEndpoint": employee.get("sourceEndpoint"),
+        }
+        return blocker
+    employee["capability"] = capability
+    return employee
+
+
 def _raw_endpoint_output(
     *,
     host: str,
@@ -615,7 +735,15 @@ def _raw_endpoint_output(
     cookie: str | list[str] | None = None,
     authorization: str | None = None,
     raw: bool = False,
+    skip_capability_guard: bool = False,
 ) -> dict[str, Any]:
+    if not skip_capability_guard:
+        capability = ENDPOINT_CAPABILITIES.get(path)
+        if capability:
+            blocker = _guard_business_capability(host, cookie, authorization, capability)
+            if blocker:
+                blocker["sourceEndpoint"] = path
+                return blocker
     result = _extract_data(
         _request_json(method, host, path, payload=payload, params=params, cookie=cookie, authorization=authorization)
     )
@@ -707,6 +835,38 @@ def check_employee_self_service_capability(
 
 
 @mcp.tool()
+def resolve_employee_id_by_no(
+    entId: int,
+    buId: int,
+    cookie: str,
+    employeeNo: str,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """通用地将员工工号解析为 employeeId。业务查询工具会先使用同一套解析逻辑。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+    resolved_host = host or CONFIG.host
+    result = _resolve_employee_by_business_search(resolved_host, employeeNo, cookie, authorization)
+    if not result.get("ok"):
+        return result
+    output = {
+        "ok": True,
+        "employeeId": result.get("employeeId"),
+        "employeeNo": result.get("employeeNo") or employeeNo,
+        "realName": result.get("realName"),
+        "sourceEndpoint": result.get("sourceEndpoint"),
+        "request": {"entId": int(entId), "buId": int(buId), "employeeNo": employeeNo},
+    }
+    if raw:
+        output["raw"] = result
+    return output
+
+
+@mcp.tool()
 def query_leave_balance(
     entId: int,
     buId: int,
@@ -731,6 +891,25 @@ def query_leave_balance(
         return {"ok": False, "error": "缺少员工工号；单个员工传 employeeNo，多个员工传 employeeNos"}
 
     resolved_host = host or CONFIG.host
+    resolved_employees: list[dict[str, Any]] = []
+    for employee_no in resolved_employee_nos:
+        employee = _resolve_employee_by_business_search(resolved_host, employee_no, cookie, authorization)
+        if not employee.get("ok"):
+            return employee
+        resolved_employees.append(employee)
+    blocker = _guard_business_capability(resolved_host, cookie, authorization, "attendance")
+    if blocker:
+        blocker["employees"] = [
+            {
+                "employeeId": employee.get("employeeId"),
+                "employeeNo": employee.get("employeeNo"),
+                "realName": employee.get("realName"),
+                "sourceEndpoint": employee.get("sourceEndpoint"),
+            }
+            for employee in resolved_employees
+        ]
+        blocker["sourceEndpoint"] = PATH_LEAVE_BALANCE
+        return blocker
     all_records: list[dict[str, Any]] = []
     all_columns: list[dict[str, Any]] = []
     not_found: list[str] = []
@@ -1098,11 +1277,11 @@ def query_my_profile(
     if missing:
         return missing
     resolved_host = host or CONFIG.host
-    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    employee = _prepare_business_query(host=resolved_host, cookie=cookie, authorization=authorization, capability="profile", employee_id=employeeId, employee_no=employeeNo)
     if not employee.get("ok"):
         return employee
     body = _merge_payload({"employeeId": employee["employeeId"], "employeeIds": [employee["employeeId"]]}, payload)
-    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_PROFILE_DETAIL, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_PROFILE_DETAIL, payload=body, cookie=cookie, authorization=authorization, raw=raw, skip_capability_guard=True)
 
 
 @mcp.tool()
@@ -1123,11 +1302,11 @@ def query_my_staff_info(
     if missing:
         return missing
     resolved_host = host or CONFIG.host
-    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    employee = _prepare_business_query(host=resolved_host, cookie=cookie, authorization=authorization, capability="profile", employee_id=employeeId, employee_no=employeeNo)
     if not employee.get("ok"):
         return employee
     body = _merge_payload({"employeeId": employee["employeeId"], "moduleType": 1, "tabKey": "staffInfo"}, payload)
-    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_STAFF_INFO, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_STAFF_INFO, payload=body, cookie=cookie, authorization=authorization, raw=raw, skip_capability_guard=True)
 
 
 @mcp.tool()
@@ -1148,11 +1327,11 @@ def query_my_job_info(
     if missing:
         return missing
     resolved_host = host or CONFIG.host
-    employee = _resolve_employee_id(resolved_host, cookie, authorization, employee_id=employeeId, employee_no=employeeNo)
+    employee = _prepare_business_query(host=resolved_host, cookie=cookie, authorization=authorization, capability="profile", employee_id=employeeId, employee_no=employeeNo)
     if not employee.get("ok"):
         return employee
     body = _merge_payload({"employeeId": employee["employeeId"], "moduleType": 2, "tabKey": "jobInfo"}, payload)
-    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_JOB_INFO, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+    return _raw_endpoint_output(host=resolved_host, method="POST", path=PATH_JOB_INFO, payload=body, cookie=cookie, authorization=authorization, raw=raw, skip_capability_guard=True)
 
 
 @mcp.tool()
