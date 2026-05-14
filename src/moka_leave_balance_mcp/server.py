@@ -3017,6 +3017,29 @@ def list_openapi_migration_status() -> dict[str, Any]:
     }
 
 
+OPENAPI_TOOL_NAMES = {
+    "call_moka_openapi",
+    "openapi_query_leave_balance",
+    "openapi_query_leave_records",
+    "openapi_query_employee_project_groups",
+    "openapi_query_salary_archive",
+    "openapi_query_payroll_result",
+    "openapi_query_social_fund_archive",
+    "openapi_query_personal_tax",
+    "openapi_query_incentive_activity",
+    "list_openapi_migration_status",
+}
+
+
+def _expose_openapi_tools_only() -> None:
+    for tool_name in list(mcp._tool_manager._tools):
+        if tool_name not in OPENAPI_TOOL_NAMES:
+            mcp.remove_tool(tool_name)
+
+
+_expose_openapi_tools_only()
+
+
 def main() -> None:
     _configure_from_args()
     mcp.run()
