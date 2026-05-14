@@ -5,7 +5,7 @@
 这个版本同时支持两类工具：
 
 - 员工端/PC 内部接口工具：通过工具参数里的 `cookie` 使用当前登录态，适合校验员工自助可见配置，但稳定性取决于当前登录态和员工上下文。
-- Moka OpenAPI 工具：不使用 `cookie`，使用 `entCode`、`apiKey`、`privateKey` 生成官方签名，适合在百炼里稳定查询已开放的 OpenAPI 数据。`apiCode` 如果租户没有配置可以不传，MCP 会按全量字段请求尝试调用。
+- Moka OpenAPI 工具：不使用 `cookie`，使用 `entCode`、`apiCode`、`apiKey`、`privateKey` 生成官方签名，适合在百炼里稳定查询已开放的 OpenAPI 数据。
 
 ## 百炼配置
 
@@ -22,18 +22,13 @@
         "--host", "core.mokahr.com",
         "--openapi-host", "api.mokahr.com",
         "--ent-code", "你的 entCode",
+        "--api-code", "你的 apiCode",
         "--api-key", "你的 apiKey",
         "--private-key", "你的 privateKey"
       ]
     }
   }
 }
-```
-
-如果以后拿到了 `apiCode`，也可以额外加：
-
-```text
---api-code 你的 apiCode
 ```
 
 员工端工具调用时传入：
@@ -112,7 +107,6 @@ OpenAPI：
 身份与配置：
 
 - `query_current_user`：查询当前 Cookie 对应的登录用户/员工身份。
-- `diagnose_moka_session`：诊断当前 Cookie、员工身份、工号解析和员工自助入口配置是否满足稳定查询条件。
 - `diagnose_moka_session`：诊断当前 Cookie、员工身份、工号解析和员工自助入口配置是否满足稳定查询条件。
 - `check_employee_self_service_capability`：查询员工自助入口是否开放，例如“我的薪酬”“社保公积金”“假期”。
 - `check_salary_self_service_enabled`：专门检查“我的薪酬/工资条/薪资”入口是否可见。
