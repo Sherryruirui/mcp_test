@@ -37,6 +37,8 @@
 
 完整浏览器 Cookie 也可以，MCP 会自动把 `;` 后的空格规范化。
 
+如果返回 `authContextError: true`，或者错误中出现 `code=100007, msg=获取用户信息失败`，说明当前 Cookie 不是可用的 Moka 登录态，后端无法识别当前用户。此时不要继续换工号，应重新从 Chrome 开发者工具 Network 里复制 `core.mokahr.com` 请求头中的完整 `Cookie`，更新工具参数后重试；至少需要有效的 `moka-jwt` 和 `moka-uid`。
+
 ## 查询流程
 
 所有业务查询统一走同一条管线：

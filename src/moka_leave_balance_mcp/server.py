@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 MCP_NAME = "moka-employee-self-service"
 DEFAULT_HOST = "core.mokahr.com"
 SUCCESS_CODES = {0, "0", 200, "200", "00000", 1000000, "1000000"}
+AUTH_CONTEXT_ERROR_CODES = {100007, "100007"}
 
 PATH_CURRENT_USER = "/api/aggregate/employee/getUserInfo"
 PATH_LEAVE_BALANCE = "/api/abs/account/v2/account/pc/balanceList"
@@ -279,8 +280,60 @@ def _post_json(
     return _request_json("POST", host, path, payload=payload, cookie=cookie, authorization=authorization)
 
 
+def _message_has_auth_context_error(message: str) -> bool:
+    return (
+        "获取用户信息失败" in message
+        or "未登录" in message
+        or "登录态" in message
+        or ("登录" in message and "失败" in message)
+    )
+
+
+def _response_has_auth_context_error(response: Any) -> bool:
+    if isinstance(response, dict):
+        code = response.get("code")
+        message = str(response.get("msg") or response.get("message") or response.get("error") or "")
+        return code in AUTH_CONTEXT_ERROR_CODES or _message_has_auth_context_error(message)
+    if isinstance(response, str):
+        return "100007" in response or _message_has_auth_context_error(response)
+    return False
+
+
+def _auth_context_error_response(
+    *,
+    raw: Any,
+    url: str | None = None,
+    status: int | None = None,
+    content_type: str | None = None,
+) -> dict[str, Any]:
+    output: dict[str, Any] = {
+        "ok": False,
+        "authContextError": True,
+        "error": "当前 Moka 登录态不可用或已过期，后端无法获取当前用户信息。请在 MCP 工具参数 cookie 中传入当前浏览器登录 core.mokahr.com 的完整有效 Cookie 后重试。",
+        "askUserFor": ["cookie"],
+        "requiredCookieHint": "建议传完整 Cookie；至少应包含有效的 moka-jwt 和 moka-uid，格式如 moka-jwt=xxx;moka-uid=xxx。",
+        "nextAction": "重新从 Chrome 开发者工具 Network 请求头中复制 core.mokahr.com 的 Cookie，更新百炼工具入参后再次调用。",
+        "raw": raw,
+    }
+    if status is not None:
+        output["status"] = status
+    if content_type:
+        output["contentType"] = content_type
+    if url:
+        output["url"] = url
+    return output
+
+
 def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
     if not result.get("ok"):
+        body = result.get("body")
+        if _response_has_auth_context_error(body) or _response_has_auth_context_error(result.get("error")):
+            return _auth_context_error_response(
+                raw=body or result,
+                url=result.get("url"),
+                status=result.get("status"),
+                content_type=result.get("contentType"),
+            )
         return result
     response = result.get("response")
     if isinstance(response, dict):
@@ -289,13 +342,29 @@ def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
             return {"ok": True, "data": response.get("data"), "raw": response}
         if code is None and ("data" in response or "success" in response):
             return {"ok": True, "data": response.get("data", response), "raw": response}
+        if _response_has_auth_context_error(response):
+            return _auth_context_error_response(
+                raw=response,
+                url=result.get("url"),
+                status=result.get("status"),
+                content_type=result.get("contentType"),
+            )
         return {"ok": False, "error": f"API failed: code={code}, msg={response.get('msg', '')}", "raw": response}
     if isinstance(response, str):
         preview = response[:500]
+        if _response_has_auth_context_error(response):
+            return _auth_context_error_response(
+                raw=response[:2000],
+                url=result.get("url"),
+                status=result.get("status"),
+                content_type=result.get("contentType"),
+            )
         if "<!DOCTYPE html" in preview or "<html" in preview:
             return {
                 "ok": False,
+                "authContextError": True,
                 "error": "接口返回 HTML 页面，不是 JSON；通常表示未登录、缺少 Cookie/Authorization，或 host 没有路由到后端接口。",
+                "askUserFor": ["cookie"],
                 "status": result.get("status"),
                 "contentType": result.get("contentType"),
                 "url": result.get("url"),
@@ -399,7 +468,7 @@ def _api_error_code(result: dict[str, Any]) -> Any:
 def _is_auth_context_error(result: dict[str, Any]) -> bool:
     code = _api_error_code(result)
     message = str(result.get("error") or "")
-    return code in {100007, "100007"} or "获取用户信息失败" in message or "未登录" in message or "登录" in message and "失败" in message
+    return bool(result.get("authContextError")) or code in AUTH_CONTEXT_ERROR_CODES or _message_has_auth_context_error(message)
 
 
 def _current_employee(
