@@ -189,6 +189,9 @@ mcp = FastMCP(MCP_NAME)
 class ServerConfig:
     host: str = DEFAULT_HOST
     openapi_host: str = DEFAULT_OPENAPI_HOST
+    tool_mode: str = "openapi"
+    ent_id: int | None = None
+    bu_id: int | None = None
     cookie: str | None = None
     authorization: str | None = None
 
@@ -200,12 +203,18 @@ def _configure_from_args() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--openapi-host", default=DEFAULT_OPENAPI_HOST)
+    parser.add_argument("--tool-mode", choices=("openapi", "internal"), default="openapi")
+    parser.add_argument("--ent-id", type=int)
+    parser.add_argument("--bu-id", type=int)
     parser.add_argument("--cookie", nargs="+")
     parser.add_argument("--authorization")
     args, _ = parser.parse_known_args()
 
     CONFIG.host = args.host
     CONFIG.openapi_host = args.openapi_host
+    CONFIG.tool_mode = args.tool_mode
+    CONFIG.ent_id = args.ent_id
+    CONFIG.bu_id = args.bu_id
     CONFIG.cookie = _normalize_cookie_arg(args.cookie)
     CONFIG.authorization = args.authorization
 
@@ -740,6 +749,39 @@ def _require_cookie(cookie: str | list[str] | None) -> dict[str, Any] | None:
     if _normalize_cookie_arg(cookie) or CONFIG.cookie:
         return None
     return {"ok": False, "error": "缺少 cookie。该 MCP 走 Moka 员工端/PC 登录态接口，需要把当前登录用户 Cookie 作为工具参数传入。"}
+
+
+def _internal_context() -> dict[str, Any]:
+    if not CONFIG.cookie and not CONFIG.authorization:
+        return {
+            "ok": False,
+            "error": "缺少启动鉴权。internal 模式不需要 apiCode/privateKey/apiKey，但需要在 MCP 启动参数中配置 --cookie 或 --authorization。",
+            "askUserFor": ["cookie 或 authorization"],
+        }
+    if CONFIG.ent_id is None or CONFIG.bu_id is None:
+        return {
+            "ok": False,
+            "error": "缺少启动参数 entId/buId。internal 模式需要在百炼启动参数中配置 --ent-id 和 --bu-id。",
+            "askUserFor": ["entId", "buId"],
+        }
+    return {
+        "ok": True,
+        "host": CONFIG.host,
+        "entId": CONFIG.ent_id,
+        "buId": CONFIG.bu_id,
+        "cookie": CONFIG.cookie,
+        "authorization": CONFIG.authorization,
+    }
+
+
+def _internal_employee(
+    host: str,
+    cookie: str | None,
+    authorization: str | None,
+    employee_no: str | None,
+    employee_id: int | None = None,
+) -> dict[str, Any]:
+    return _resolve_employee_id(host, cookie, authorization, employee_id=employee_id, employee_no=employee_no)
 
 
 def _pick_employee_id(value: Any) -> int | None:
@@ -2754,6 +2796,252 @@ def query_social_fund_history_pay_detail(
 
 
 @mcp.tool()
+def internal_query_leave_balance(
+    employeeNo: str,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询假期余额。鉴权从 MCP 启动参数读取，不需要 apiCode/privateKey/apiKey。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    return query_leave_balance(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        employeeNo=employeeNo,
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
+def internal_query_leave_records(
+    employeeNo: str,
+    page: int = 1,
+    pageSize: int = 20,
+    startDate: str | None = None,
+    endDate: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询请假记录。可传 startDate/endDate。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    payload = {key: value for key, value in {"startDate": startDate, "endDate": endDate}.items() if value is not None}
+    return query_leave_records(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        employeeNo=employeeNo,
+        page=page,
+        pageSize=pageSize,
+        payload=payload or None,
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
+def internal_query_clock_records(
+    employeeNo: str,
+    startDate: str | None = None,
+    endDate: str | None = None,
+    page: int = 1,
+    pageSize: int = 31,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询打卡记录。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    return query_clock_records(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        employeeNo=employeeNo,
+        startDate=startDate,
+        endDate=endDate,
+        page=page,
+        pageSize=pageSize,
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
+def internal_query_attendance_calendar(
+    employeeNo: str,
+    date: str | None = None,
+    month: str | None = None,
+    year: int | None = None,
+    monthNumber: int | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询考勤日历。传 date=YYYY-MM-DD 查单日，或 month=YYYY-MM 查整月。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    return query_attendance_calendar(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        employeeNo=employeeNo,
+        date=date,
+        month=month,
+        year=year,
+        monthNumber=monthNumber,
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
+def internal_query_my_profile(
+    employeeNo: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询员工个人档案。employeeNo 为空时按当前登录态解析当前员工。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    return query_my_profile(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        employeeNo=employeeNo,
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
+def internal_query_my_payroll_list(
+    totalMonth: int | None = None,
+    thisYear: bool | None = None,
+    uuid: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询当前员工工资条列表，先检查我的薪酬入口。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    return query_my_payroll_list(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        totalMonth=totalMonth,
+        thisYear=thisYear,
+        uuid=uuid,
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
+def internal_query_payslip_detail(
+    payrollDetailId: int | None = None,
+    uuid: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询当前员工工资条详情，先检查我的薪酬入口。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    return query_payslip_detail(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        payrollDetailId=payrollDetailId,
+        uuid=uuid,
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
+def internal_query_salary_archive(
+    employeeNo: str,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询薪资档案，先检查我的薪酬入口。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    return query_salary_archive_info(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        employeeNo=employeeNo,
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
+def internal_query_personal_tax(
+    employeeNo: str,
+    salaryYearAndMonth: str | None = None,
+    taxBelong: str | None = None,
+    pageNumber: int = 1,
+    pageSize: int = 20,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询个税记录，先检查我的薪酬入口。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    return query_personal_tax_reports(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        employeeNo=employeeNo,
+        salaryYearAndMonth=salaryYearAndMonth,
+        taxBelong=taxBelong,
+        pageNumber=pageNumber,
+        pageSize=pageSize,
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
+def internal_query_social_fund_file_info(
+    raw: bool = False,
+) -> dict[str, Any]:
+    """内部接口查询当前员工社保公积金档案，先检查社保公积金入口。"""
+
+    ctx = _internal_context()
+    if not ctx.get("ok"):
+        return ctx
+    return query_social_fund_file_info(
+        entId=ctx["entId"],
+        buId=ctx["buId"],
+        cookie=ctx.get("cookie") or "",
+        host=ctx["host"],
+        authorization=ctx.get("authorization"),
+        raw=raw,
+    )
+
+
+@mcp.tool()
 def check_salary_self_service_enabled(
     entId: int,
     buId: int,
@@ -3055,17 +3343,29 @@ OPENAPI_TOOL_NAMES = {
 }
 
 
-def _expose_openapi_tools_only() -> None:
+INTERNAL_TOOL_NAMES = {
+    "internal_query_leave_balance",
+    "internal_query_leave_records",
+    "internal_query_clock_records",
+    "internal_query_attendance_calendar",
+    "internal_query_my_profile",
+    "internal_query_my_payroll_list",
+    "internal_query_payslip_detail",
+    "internal_query_salary_archive",
+    "internal_query_personal_tax",
+    "internal_query_social_fund_file_info",
+}
+
+
+def _expose_tools(allowed_tool_names: set[str]) -> None:
     for tool_name in list(mcp._tool_manager._tools):
-        if tool_name not in OPENAPI_TOOL_NAMES:
+        if tool_name not in allowed_tool_names:
             mcp.remove_tool(tool_name)
-
-
-_expose_openapi_tools_only()
 
 
 def main() -> None:
     _configure_from_args()
+    _expose_tools(INTERNAL_TOOL_NAMES if CONFIG.tool_mode == "internal" else OPENAPI_TOOL_NAMES)
     mcp.run()
 
 
