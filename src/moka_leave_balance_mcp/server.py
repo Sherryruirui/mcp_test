@@ -2036,7 +2036,11 @@ def query_salary_archive_info(
     authorization: str | None = None,
     raw: bool = False,
 ) -> dict[str, Any]:
-    """先检查“我的薪酬”入口，再查询员工薪资档案详情。"""
+    """先检查“我的薪酬”入口，再查询员工薪资档案详情。
+
+    员工端“我的薪酬配置-薪资”对应的是当前员工薪资信息接口；后台薪资档案接口
+    对普通员工自助场景可能返回空，因此空结果时会兜底查询 query_my_salary_info。
+    """
 
     missing = _require_cookie(cookie)
     if missing:
@@ -2049,7 +2053,24 @@ def query_salary_archive_info(
     if not employee.get("ok"):
         return employee
     query = _merge_payload({"id": employee["employeeId"]}, params)
-    return _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_SALARY_ARCHIVES_INFO, params=query, cookie=cookie, authorization=authorization, raw=raw)
+    archive = _raw_endpoint_output(host=resolved_host, method="GET", path=PATH_SALARY_ARCHIVES_INFO, params=query, cookie=cookie, authorization=authorization, raw=raw)
+    data = archive.get("data") if isinstance(archive, dict) else None
+    if archive.get("ok") and data in (None, [], {}):
+        self_salary = _raw_endpoint_output(
+            host=resolved_host,
+            method="GET",
+            path=PATH_MY_SALARY_INFO,
+            params=params,
+            cookie=cookie,
+            authorization=authorization,
+            raw=raw,
+        )
+        if self_salary.get("ok"):
+            self_salary["sourceEndpoint"] = PATH_MY_SALARY_INFO
+            self_salary["fallbackFrom"] = PATH_SALARY_ARCHIVES_INFO
+            self_salary["note"] = "后台薪资档案接口返回空，已改用员工端我的薪酬-薪资接口。"
+        return self_salary
+    return archive
 
 
 @mcp.tool()

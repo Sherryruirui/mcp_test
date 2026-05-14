@@ -59,6 +59,12 @@
 如果返回 employeeContextError 或 blockers 中提示员工身份问题，要求用户确认 Cookie 来自已绑定员工档案的员工端账号，并提供正确 employeeNo。
 如果 capabilityCheck.visible=false，直接告知“当前员工自助未配置员工可见，当前信息不可查询”，不要继续调用业务查询。
 如果缺少 year、month、date、payrollId、activityId 等业务必填参数，先追问用户补充，不要猜测。
+
+薪酬路由特别说明：
+- 用户说“看看我的薪资档案”“查我的薪资信息”“我的薪资标准/年度总收入”等员工端可见薪资字段时，优先调用 query_my_salary_info。
+- 不要因为 query_salary_archive_info 返回空数组就判断“薪资档案未开放”。后台薪资档案接口和员工端“我的薪酬-薪资”展示不是同一个接口。
+- query_salary_archive_info 只用于明确查询后台薪资档案详情；如果它返回 fallbackFrom=/api/salary/v1/archives/page/info，说明已经自动兜底到员工端 query_my_salary_info。
+- 用户问工资条列表时调用 query_my_payroll_list；问某张工资条详情时先用 query_my_payroll_list 获取 payrollDetailId 或 uuid，再调用 query_payslip_detail。
 ```
 
 ## 查询流程
@@ -127,10 +133,10 @@
 - `query_payslip_employee_info`：先检查入口，再查询工资条员工基础信息。
 - `query_payslip_multi_info`：先检查入口，再查询工资单当月多笔信息。
 - `query_payslip_hidden_status`：先检查入口，再查询工资单数字隐藏状态。
-- `query_my_salary_info`：先检查入口，再查询当前员工薪资信息。
+- `query_my_salary_info`：先检查入口，再查询当前员工薪资信息。用户说“我的薪资档案/薪资信息”时优先用这个工具。
 - `query_my_salary_available_items`：先检查入口，再查询我的薪酬可用功能项。
 - `query_my_salary_display_config`：先检查入口，再查询我的薪酬展示配置。
-- `query_salary_archive_info`：先检查入口，再查询员工薪资档案详情。
+- `query_salary_archive_info`：先检查入口，再查询后台员工薪资档案详情；如果返回空会兜底查询员工端当前薪资信息。
 - `query_salary_archive_change_history`：先检查入口，再查询薪资档案变更历史。
 - `query_salary_employee_info`：先检查入口，再查询员工薪资相关基础信息。
 - `query_personal_tax_reports`：先检查入口，再查询员工个税记录/报送列表。
