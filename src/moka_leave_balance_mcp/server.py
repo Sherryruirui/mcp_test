@@ -24,7 +24,6 @@ DEFAULT_OPENAPI_HOST = "api.mokahr.com"
 SUCCESS_CODES = {0, "0", 200, "200", "00000", 1000000, "1000000"}
 AUTH_CONTEXT_ERROR_CODES = {100007, "100007"}
 EMPLOYEE_CONTEXT_ERROR_CODES = {100000, "100000"}
-EMPLOYEE_CONTEXT_ERROR_CODES = {100000, "100000"}
 
 PATH_CURRENT_USER = "/api/aggregate/employee/getUserInfo"
 PATH_LEAVE_BALANCE = "/api/abs/account/v2/account/pc/balanceList"
@@ -192,11 +191,6 @@ class ServerConfig:
     openapi_host: str = DEFAULT_OPENAPI_HOST
     cookie: str | None = None
     authorization: str | None = None
-    ent_code: str | None = None
-    api_code: str | None = None
-    api_key: str | None = None
-    user_name: str | None = None
-    private_key: str | None = None
 
 
 CONFIG = ServerConfig()
@@ -208,22 +202,12 @@ def _configure_from_args() -> None:
     parser.add_argument("--openapi-host", default=DEFAULT_OPENAPI_HOST)
     parser.add_argument("--cookie", nargs="+")
     parser.add_argument("--authorization")
-    parser.add_argument("--ent-code")
-    parser.add_argument("--api-code")
-    parser.add_argument("--api-key")
-    parser.add_argument("--user-name")
-    parser.add_argument("--private-key", nargs="+")
     args, _ = parser.parse_known_args()
 
     CONFIG.host = args.host
     CONFIG.openapi_host = args.openapi_host
     CONFIG.cookie = _normalize_cookie_arg(args.cookie)
     CONFIG.authorization = args.authorization
-    CONFIG.ent_code = args.ent_code
-    CONFIG.api_code = args.api_code
-    CONFIG.api_key = args.api_key
-    CONFIG.user_name = args.user_name
-    CONFIG.private_key = " ".join(args.private_key) if args.private_key else None
 
 
 def _normalize_cookie_arg(value: str | list[str] | None) -> str | None:
@@ -261,11 +245,11 @@ def _required_openapi_credentials(
 ) -> dict[str, Any] | None:
     missing: list[str] = []
     _ = user_name
-    if not (ent_code or CONFIG.ent_code):
+    if not ent_code:
         missing.append("entCode")
-    if not (api_key or CONFIG.api_key):
+    if not api_key:
         missing.append("apiKey")
-    if not (private_key or CONFIG.private_key):
+    if not private_key:
         missing.append("privateKey")
     if not missing:
         return None
@@ -406,11 +390,11 @@ def _call_openapi(
     missing = _required_openapi_credentials(userName, entCode, apiCode, apiKey, privateKey)
     if missing:
         return missing
-    resolved_ent_code = entCode or CONFIG.ent_code
-    resolved_user_name = userName or CONFIG.user_name
-    resolved_api_code = apiCode or CONFIG.api_code
-    resolved_api_key = apiKey or CONFIG.api_key
-    resolved_private_key = privateKey or CONFIG.private_key
+    resolved_ent_code = entCode
+    resolved_user_name = userName
+    resolved_api_code = apiCode
+    resolved_api_key = apiKey
+    resolved_private_key = privateKey
     if not resolved_ent_code or not resolved_api_key or not resolved_private_key:
         return {"ok": False, "error": "缺少 OpenAPI 鉴权参数。"}
     result = _openapi_extract_response(
@@ -504,24 +488,6 @@ def _response_has_auth_context_error(response: Any) -> bool:
         return code in AUTH_CONTEXT_ERROR_CODES or _message_has_auth_context_error(message)
     if isinstance(response, str):
         return "100007" in response or _message_has_auth_context_error(response)
-    return False
-
-
-def _message_has_employee_context_error(message: str) -> bool:
-    return (
-        "获取员工信息失败" in message
-        or "无法从当前登录态解析当前员工" in message
-        or "当前用户信息中未找到 employeeId" in message
-    )
-
-
-def _response_has_employee_context_error(response: Any) -> bool:
-    if isinstance(response, dict):
-        code = response.get("code")
-        message = str(response.get("msg") or response.get("message") or response.get("error") or "")
-        return code in EMPLOYEE_CONTEXT_ERROR_CODES and _message_has_employee_context_error(message)
-    if isinstance(response, str):
-        return _message_has_employee_context_error(response)
     return False
 
 
@@ -1340,85 +1306,6 @@ def diagnose_moka_session(
                 value.pop("raw", None)
     return output
 
-
-@mcp.tool()
-def diagnose_moka_session(
-    entId: int,
-    buId: int,
-    cookie: str,
-    employeeNo: str | None = None,
-    capability: str | None = None,
-    keyword: str | None = None,
-    host: str | None = None,
-    authorization: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """诊断当前 Cookie 是否能支撑员工自助查询：登录态、员工身份、工号解析、自助功能可见性。"""
-
-    missing = _require_cookie(cookie)
-    if missing:
-        return missing
-
-    resolved_host = host or CONFIG.host
-    current_user = _raw_endpoint_output(
-        host=resolved_host,
-        method="POST",
-        path=PATH_CURRENT_USER,
-        payload={},
-        cookie=cookie,
-        authorization=authorization,
-        raw=raw,
-    )
-    current_employee = _current_employee(resolved_host, cookie, authorization)
-    employee_lookup: dict[str, Any] | None = None
-    if employeeNo:
-        employee_lookup = _resolve_employee_by_business_search(resolved_host, employeeNo, cookie, authorization)
-
-    capability_check: dict[str, Any] | None = None
-    resolved_keywords: list[str] = []
-    if capability:
-        resolved_keywords = list(BUSINESS_CAPABILITY_KEYWORDS.get(capability, (capability,)))
-    elif keyword:
-        resolved_keywords = [keyword]
-    if resolved_keywords:
-        capability_check = _check_capability_keywords(resolved_host, cookie, authorization, resolved_keywords)
-
-    blockers: list[str] = []
-    if current_user.get("authContextError"):
-        blockers.append("cookie 无法识别当前用户，请重新复制 core.mokahr.com 请求头中的完整 Cookie。")
-    if current_employee.get("employeeContextError") or not current_employee.get("ok"):
-        blockers.append("当前登录态无法解析当前员工身份，请确认账号已绑定员工档案，且 Cookie 来自员工端已登录账号。")
-    if employee_lookup and not employee_lookup.get("ok"):
-        blockers.append("指定 employeeNo 未能解析为 employeeId，请确认工号、账号权限或改传可查询范围内的员工。")
-    if capability_check and capability_check.get("ok") and not capability_check.get("visible"):
-        blockers.append("员工自助配置未开放该业务入口，MCP 应阻断对应敏感信息查询。")
-    if capability_check and not capability_check.get("ok"):
-        blockers.append("员工自助配置查询失败，MCP 不应继续查询敏感信息。")
-
-    output: dict[str, Any] = {
-        "ok": not blockers,
-        "diagnosis": "可继续调用业务查询工具。" if not blockers else "当前会话不满足稳定查询条件，请先处理 blockers。",
-        "blockers": blockers,
-        "request": {
-            "entId": int(entId),
-            "buId": int(buId),
-            "employeeNo": employeeNo,
-            "capability": capability,
-            "keyword": keyword,
-        },
-        "currentUser": current_user,
-        "currentEmployee": current_employee,
-    }
-    if employee_lookup is not None:
-        output["employeeLookup"] = employee_lookup
-    if capability_check is not None:
-        output["capabilityCheck"] = capability_check
-    if not raw:
-        for key in ("currentUser", "currentEmployee", "employeeLookup", "capabilityCheck"):
-            value = output.get(key)
-            if isinstance(value, dict):
-                value.pop("raw", None)
-    return output
 
 
 @mcp.tool()
