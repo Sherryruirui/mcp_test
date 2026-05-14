@@ -247,6 +247,8 @@ def _required_openapi_credentials(
     _ = user_name
     if not ent_code:
         missing.append("entCode")
+    if not api_code:
+        missing.append("apiCode")
     if not api_key:
         missing.append("apiKey")
     if not private_key:
@@ -256,8 +258,8 @@ def _required_openapi_credentials(
     return _missing_params_error(
         "openapi",
         missing,
-        "缺少 Moka OpenAPI 鉴权参数。OpenAPI 不使用 cookie，需要传 entCode、apiKey、privateKey；apiCode 如租户未配置可不传，MCP 会按全量字段请求尝试调用。",
-        examples=[{"entCode": "your_ent_code", "apiKey": "your_api_key", "privateKey": "-----BEGIN PRIVATE KEY-----\\n..."}],
+        "缺少 Moka OpenAPI 鉴权参数。OpenAPI 不使用 cookie，需要传 entCode、apiCode、apiKey、privateKey；apiCode 是 Moka People「设置-对外接口设置」里对应数据源的接口编码。",
+        examples=[{"entCode": "your_ent_code", "apiCode": "your_api_code", "apiKey": "your_api_key", "privateKey": "-----BEGIN PRIVATE KEY-----\\n..."}],
     )
 
 
@@ -2776,6 +2778,15 @@ def _openapi_payload(**kwargs: Any) -> dict[str, Any]:
     return {key: value for key, value in kwargs.items() if value is not None}
 
 
+def _openapi_employee_filter(employee_no: str | None = None, employee_id: int | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if employee_id is not None:
+        payload["employeeIdList"] = [employee_id]
+    if employee_no:
+        payload["employeeNoList"] = [employee_no]
+    return payload
+
+
 def _openapi_unverified_path_warning(path: str, label: str) -> dict[str, Any]:
     return {
         "openapiPathVerification": "unverified",
@@ -2829,8 +2840,8 @@ def openapi_query_leave_balance(
 
     if not employeeNo and employeeId is None:
         return _missing_params_error("openapi_query_leave_balance", ["employeeNo"], "缺少员工标识，建议传 employeeNo。")
-    path = "/api-platform/hcm/oapi/v1/attendance/leave/balance"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, pageNum=pageNum, pageSize=pageSize)
+    path = "/api-platform/hcm/oapi/v2/absence/account/search"
+    payload = _openapi_payload(**_openapi_employee_filter(employeeNo, employeeId), pageNum=pageNum, pageSize=pageSize)
     result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
     result.setdefault("notice", _openapi_unverified_path_warning(path, "假期余额查询"))
     return result
@@ -2854,8 +2865,8 @@ def openapi_query_leave_records(
 ) -> dict[str, Any]:
     """OpenAPI 查询请假记录；不需要 cookie。"""
 
-    path = "/api-platform/hcm/oapi/v1/attendance/leave/record"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, startDate=startDate, endDate=endDate, pageNum=pageNum, pageSize=pageSize)
+    path = "/api-platform/hcm/oapi/v2/absence/attendance/leave/records"
+    payload = _openapi_payload(**_openapi_employee_filter(employeeNo, employeeId), startDate=startDate, endDate=endDate, pageNum=pageNum, pageSize=pageSize)
     result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
     result.setdefault("notice", _openapi_unverified_path_warning(path, "请假记录查询"))
     return result
@@ -2877,8 +2888,8 @@ def openapi_query_employee_project_groups(
 ) -> dict[str, Any]:
     """OpenAPI 获取员工所属项目组数据；不需要 cookie。"""
 
-    path = "/api-platform/hcm/oapi/v1/employee/project/group"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, pageNum=pageNum, pageSize=pageSize)
+    path = "/api-platform/hcm/oapi/v1/user/batch_get_emp_project"
+    payload = _openapi_payload(**_openapi_employee_filter(employeeNo, employeeId), pageNum=pageNum, pageSize=pageSize)
     result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
     result.setdefault("notice", _openapi_unverified_path_warning(path, "员工所属项目组数据"))
     return result
@@ -2900,8 +2911,8 @@ def openapi_query_salary_archive(
 ) -> dict[str, Any]:
     """OpenAPI 查询薪资档案；不需要 cookie。"""
 
-    path = "/api-platform/hcm/oapi/v1/salary/archive"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, pageNum=pageNum, pageSize=pageSize)
+    path = "/api-platform/hcm/oapi/v1/salary/archives"
+    payload = _openapi_payload(**_openapi_employee_filter(employeeNo, employeeId), pageNum=pageNum, pageSize=pageSize)
     result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
     result.setdefault("notice", _openapi_unverified_path_warning(path, "薪资档案查询"))
     return result
@@ -2924,8 +2935,8 @@ def openapi_query_payroll_result(
 ) -> dict[str, Any]:
     """OpenAPI 查询工资/薪酬核算结果；不需要 cookie。"""
 
-    path = "/api-platform/hcm/oapi/v1/salary/payroll/result"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, payrollMonth=payrollMonth, pageNum=pageNum, pageSize=pageSize)
+    path = "/api-platform/hcm/oapi/v1/salary/account"
+    payload = _openapi_payload(**_openapi_employee_filter(employeeNo, employeeId), salaryYearAndMonth=payrollMonth, pageNum=pageNum, pageSize=pageSize)
     result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
     result.setdefault("notice", _openapi_unverified_path_warning(path, "工资/薪酬核算结果查询"))
     return result
@@ -2947,8 +2958,8 @@ def openapi_query_social_fund_archive(
 ) -> dict[str, Any]:
     """OpenAPI 查询社保公积金档案；不需要 cookie。"""
 
-    path = "/api-platform/hcm/oapi/v1/salary/social-fund/archive"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, pageNum=pageNum, pageSize=pageSize)
+    path = "/api-platform/hcm/oapi/v1/salary/social"
+    payload = _openapi_payload(**_openapi_employee_filter(employeeNo, employeeId), pageNum=pageNum, pageSize=pageSize)
     result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
     result.setdefault("notice", _openapi_unverified_path_warning(path, "社保公积金档案查询"))
     return result
@@ -3016,19 +3027,19 @@ def list_openapi_migration_status() -> dict[str, Any]:
             "openapi_query_salary_archive",
             "openapi_query_payroll_result",
             "openapi_query_social_fund_archive",
-            "openapi_query_personal_tax",
-            "openapi_query_incentive_activity",
         ],
         "notFullyMigrated": [
             {"feature": "员工端自助可见性配置", "reason": "目前只找到内部员工端配置接口；OpenAPI 是否开放需以官方文档为准。"},
             {"feature": "工资条详情/隐藏状态/展示配置", "reason": "当前实现来自内部薪酬员工端接口；需补充官方 OpenAPI 请求地址后才能稳定迁移。"},
+            {"feature": "个税独立查询", "reason": "官方文档中当前只在工资核算结果里包含个税字段，未确认独立个税查询 OpenAPI。"},
+            {"feature": "奖金/调薪激励活动", "reason": "未在当前官方文档中确认对应只读 OpenAPI，请使用工资核算结果或薪资档案查询相关字段。"},
             {"feature": "审批待办/审批详情", "reason": "当前实现来自内部审批平台接口；需补充官方 OpenAPI 请求地址。"},
             {"feature": "当前登录用户/当前员工", "reason": "OpenAPI 是应用鉴权，不等价于 cookie 登录态，一般应改为按 employeeNo/employeeId 查询。"},
         ],
-        "authRequired": ["entCode", "apiKey", "privateKey"],
-        "authOptional": ["apiCode", "userName"],
+        "authRequired": ["entCode", "apiCode", "apiKey", "privateKey"],
+        "authOptional": ["userName"],
         "fieldPolicy": "MCP 不做字段裁剪，默认返回 OpenAPI 响应里的完整 data。",
-        "note": "OpenAPI 工具不使用 cookie。apiCode 未配置时可不传，MCP 会从签名参数中省略 apiCode；如果 Moka 网关强制要求 apiCode，仍会由服务端返回鉴权错误。专用工具中的 path 未用真实租户凭证端到端验证；如路径不符，可先用 call_moka_openapi 传官方文档请求地址调用。",
+        "note": "OpenAPI 工具不使用 cookie。apiCode 必须传，它是 Moka People「设置-对外接口设置」里对应数据源的接口编码。不同数据源可能有不同 apiCode；如果传错或不传，Moka 网关会返回 Required String parameter 'apiCode' is not present 或鉴权失败。",
     }
 
 
@@ -3040,8 +3051,6 @@ OPENAPI_TOOL_NAMES = {
     "openapi_query_salary_archive",
     "openapi_query_payroll_result",
     "openapi_query_social_fund_archive",
-    "openapi_query_personal_tax",
-    "openapi_query_incentive_activity",
     "list_openapi_migration_status",
 }
 
