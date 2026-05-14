@@ -316,6 +316,12 @@ def _openapi_auth(
 
 def _openapi_extract_response(result: dict[str, Any]) -> dict[str, Any]:
     if not result.get("ok"):
+        body = result.get("body")
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except json.JSONDecodeError:
+                pass
         if _response_has_employee_context_error(body) or _response_has_employee_context_error(result.get("error")):
             return _employee_context_error_response(
                 raw=body or result,
@@ -411,7 +417,16 @@ def _call_openapi(
     )
     if not result.get("ok"):
         return result
-    output = {"ok": True, "data": result.get("data"), "sourceEndpoint": path}
+    data = result.get("data")
+    output = {"ok": True, "data": data, "sourceEndpoint": path}
+    if data in ({}, [], None):
+        output["emptyData"] = True
+        output["requestPayload"] = payload or {}
+        output["diagnosis"] = (
+            "OpenAPI 调用成功但 data 为空。请先确认 employeeNo/employeeId 在当前 entCode 对应租户下存在；"
+            "如果员工存在，则需要核对该专用工具的 OpenAPI path 和请求字段是否与 people.mokahr.com 官方文档一致。"
+            "可以把 raw=true 后的 raw.code/msg/data 与官方接口文档对照，或使用 call_moka_openapi 传官方 path/payload 验证。"
+        )
     if raw:
         output["raw"] = result.get("raw")
     return output
