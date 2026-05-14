@@ -14,7 +14,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/Sherryruirui/mcp_test.git",
+        "git+https://github.com/Sherryruirui/mcp_test.git@internal-only",
         "moka-leave-balance-mcp",
         "--host",
         "core.mokahr.com"
