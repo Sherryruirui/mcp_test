@@ -16,6 +16,7 @@ MCP_NAME = "moka-employee-self-service"
 DEFAULT_HOST = "core.mokahr.com"
 SUCCESS_CODES = {0, "0", 200, "200", "00000", 1000000, "1000000"}
 AUTH_CONTEXT_ERROR_CODES = {100007, "100007"}
+EMPLOYEE_CONTEXT_ERROR_CODES = {100000, "100000"}
 
 PATH_CURRENT_USER = "/api/aggregate/employee/getUserInfo"
 PATH_LEAVE_BALANCE = "/api/abs/account/v2/account/pc/balanceList"
@@ -299,6 +300,24 @@ def _response_has_auth_context_error(response: Any) -> bool:
     return False
 
 
+def _message_has_employee_context_error(message: str) -> bool:
+    return (
+        "获取员工信息失败" in message
+        or "无法从当前登录态解析当前员工" in message
+        or "当前用户信息中未找到 employeeId" in message
+    )
+
+
+def _response_has_employee_context_error(response: Any) -> bool:
+    if isinstance(response, dict):
+        code = response.get("code")
+        message = str(response.get("msg") or response.get("message") or response.get("error") or "")
+        return code in EMPLOYEE_CONTEXT_ERROR_CODES and _message_has_employee_context_error(message)
+    if isinstance(response, str):
+        return _message_has_employee_context_error(response)
+    return False
+
+
 def _auth_context_error_response(
     *,
     raw: Any,
@@ -324,11 +343,42 @@ def _auth_context_error_response(
     return output
 
 
+def _employee_context_error_response(
+    *,
+    raw: Any,
+    url: str | None = None,
+    status: int | None = None,
+    content_type: str | None = None,
+) -> dict[str, Any]:
+    output: dict[str, Any] = {
+        "ok": False,
+        "employeeContextError": True,
+        "error": "当前登录态可用，但后端无法解析当前员工身份或当前接口要求的员工上下文。请确认 Cookie 来自 Moka 员工端已登录账号，且该账号已绑定员工档案；如果要查询指定员工，请同时传 employeeNo，必要时先调用 diagnose_moka_session。",
+        "askUserFor": ["cookie", "employeeNo"],
+        "nextAction": "先调用 diagnose_moka_session 检查当前用户、员工解析和员工自助配置；如果诊断里 currentUser 正常但 currentEmployee 不正常，需要换成员工本人或有员工身份的账号 Cookie。",
+        "raw": raw,
+    }
+    if status is not None:
+        output["status"] = status
+    if content_type:
+        output["contentType"] = content_type
+    if url:
+        output["url"] = url
+    return output
+
+
 def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
     if not result.get("ok"):
         body = result.get("body")
         if _response_has_auth_context_error(body) or _response_has_auth_context_error(result.get("error")):
             return _auth_context_error_response(
+                raw=body or result,
+                url=result.get("url"),
+                status=result.get("status"),
+                content_type=result.get("contentType"),
+            )
+        if _response_has_employee_context_error(body) or _response_has_employee_context_error(result.get("error")):
+            return _employee_context_error_response(
                 raw=body or result,
                 url=result.get("url"),
                 status=result.get("status"),
@@ -349,11 +399,25 @@ def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
                 status=result.get("status"),
                 content_type=result.get("contentType"),
             )
+        if _response_has_employee_context_error(response):
+            return _employee_context_error_response(
+                raw=response,
+                url=result.get("url"),
+                status=result.get("status"),
+                content_type=result.get("contentType"),
+            )
         return {"ok": False, "error": f"API failed: code={code}, msg={response.get('msg', '')}", "raw": response}
     if isinstance(response, str):
         preview = response[:500]
         if _response_has_auth_context_error(response):
             return _auth_context_error_response(
+                raw=response[:2000],
+                url=result.get("url"),
+                status=result.get("status"),
+                content_type=result.get("contentType"),
+            )
+        if _response_has_employee_context_error(response):
+            return _employee_context_error_response(
                 raw=response[:2000],
                 url=result.get("url"),
                 status=result.get("status"),
@@ -925,6 +989,86 @@ def query_current_user(
         authorization=authorization,
         raw=raw,
     ) | {"request": {"entId": int(entId), "buId": int(buId)}}
+
+
+@mcp.tool()
+def diagnose_moka_session(
+    entId: int,
+    buId: int,
+    cookie: str,
+    employeeNo: str | None = None,
+    capability: str | None = None,
+    keyword: str | None = None,
+    host: str | None = None,
+    authorization: str | None = None,
+    raw: bool = False,
+) -> dict[str, Any]:
+    """诊断当前 Cookie 是否能支撑员工自助查询：登录态、员工身份、工号解析、自助功能可见性。"""
+
+    missing = _require_cookie(cookie)
+    if missing:
+        return missing
+
+    resolved_host = host or CONFIG.host
+    current_user = _raw_endpoint_output(
+        host=resolved_host,
+        method="POST",
+        path=PATH_CURRENT_USER,
+        payload={},
+        cookie=cookie,
+        authorization=authorization,
+        raw=raw,
+    )
+    current_employee = _current_employee(resolved_host, cookie, authorization)
+    employee_lookup: dict[str, Any] | None = None
+    if employeeNo:
+        employee_lookup = _resolve_employee_by_business_search(resolved_host, employeeNo, cookie, authorization)
+
+    capability_check: dict[str, Any] | None = None
+    resolved_keywords: list[str] = []
+    if capability:
+        resolved_keywords = list(BUSINESS_CAPABILITY_KEYWORDS.get(capability, (capability,)))
+    elif keyword:
+        resolved_keywords = [keyword]
+    if resolved_keywords:
+        capability_check = _check_capability_keywords(resolved_host, cookie, authorization, resolved_keywords)
+
+    blockers: list[str] = []
+    if current_user.get("authContextError"):
+        blockers.append("cookie 无法识别当前用户，请重新复制 core.mokahr.com 请求头中的完整 Cookie。")
+    if current_employee.get("employeeContextError") or not current_employee.get("ok"):
+        blockers.append("当前登录态无法解析当前员工身份，请确认账号已绑定员工档案，且 Cookie 来自员工端已登录账号。")
+    if employee_lookup and not employee_lookup.get("ok"):
+        blockers.append("指定 employeeNo 未能解析为 employeeId，请确认工号、账号权限或改传可查询范围内的员工。")
+    if capability_check and capability_check.get("ok") and not capability_check.get("visible"):
+        blockers.append("员工自助配置未开放该业务入口，MCP 应阻断对应敏感信息查询。")
+    if capability_check and not capability_check.get("ok"):
+        blockers.append("员工自助配置查询失败，MCP 不应继续查询敏感信息。")
+
+    output: dict[str, Any] = {
+        "ok": not blockers,
+        "diagnosis": "可继续调用业务查询工具。" if not blockers else "当前会话不满足稳定查询条件，请先处理 blockers。",
+        "blockers": blockers,
+        "request": {
+            "entId": int(entId),
+            "buId": int(buId),
+            "employeeNo": employeeNo,
+            "capability": capability,
+            "keyword": keyword,
+        },
+        "currentUser": current_user,
+        "currentEmployee": current_employee,
+    }
+    if employee_lookup is not None:
+        output["employeeLookup"] = employee_lookup
+    if capability_check is not None:
+        output["capabilityCheck"] = capability_check
+    if not raw:
+        for key in ("currentUser", "currentEmployee", "employeeLookup", "capabilityCheck"):
+            value = output.get(key)
+            if isinstance(value, dict):
+                value.pop("raw", None)
+    return output
 
 
 @mcp.tool()

@@ -39,6 +39,28 @@
 
 如果返回 `authContextError: true`，或者错误中出现 `code=100007, msg=获取用户信息失败`，说明当前 Cookie 不是可用的 Moka 登录态，后端无法识别当前用户。此时不要继续换工号，应重新从 Chrome 开发者工具 Network 里复制 `core.mokahr.com` 请求头中的完整 `Cookie`，更新工具参数后重试；至少需要有效的 `moka-jwt` 和 `moka-uid`。
 
+如果返回 `employeeContextError: true`，或者错误中出现 `code=100000, msg=获取员工信息失败`，说明 Cookie 可能已经能识别用户，但当前接口无法解析员工身份或员工上下文。应先调用 `diagnose_moka_session`，确认当前账号是否绑定员工档案、`employeeNo` 是否能解析为 `employeeId`、对应员工自助入口是否可见。
+
+## 百炼调用策略建议
+
+可以在智能体提示词中增加：
+
+```text
+当用户询问 Moka/EHR 系统里的个人数据、假勤、个人档案、薪酬、工资条、个税、奖金、调薪、社保、公积金、审批等信息时，优先调用 MCP。
+
+调用具体业务工具前，如果本轮还没有诊断过登录态，先调用 diagnose_moka_session，传入 entId、buId、cookie、employeeNo，并根据问题类型传 capability：
+- 假期/考勤/打卡：attendance
+- 个人档案/个人信息/任职信息：profile
+- 薪资/工资条/个税/奖金/调薪：salary
+- 社保/公积金：social_fund
+- 审批：approval
+
+如果 diagnose_moka_session 返回 authContextError 或 blockers 中提示 Cookie 问题，要求用户重新提供 core.mokahr.com 的完整 Cookie。
+如果返回 employeeContextError 或 blockers 中提示员工身份问题，要求用户确认 Cookie 来自已绑定员工档案的员工端账号，并提供正确 employeeNo。
+如果 capabilityCheck.visible=false，直接告知“当前员工自助未配置员工可见，当前信息不可查询”，不要继续调用业务查询。
+如果缺少 year、month、date、payrollId、activityId 等业务必填参数，先追问用户补充，不要猜测。
+```
+
 ## 查询流程
 
 所有业务查询统一走同一条管线：
@@ -54,6 +76,7 @@
 身份与配置：
 
 - `query_current_user`：查询当前 Cookie 对应的登录用户/员工身份。
+- `diagnose_moka_session`：诊断当前 Cookie、员工身份、工号解析和员工自助入口配置是否满足稳定查询条件。
 - `check_employee_self_service_capability`：查询员工自助入口是否开放，例如“我的薪酬”“社保公积金”“假期”。
 - `check_salary_self_service_enabled`：专门检查“我的薪酬/工资条/薪资”入口是否可见。
 - `resolve_employee_id_by_no`：通用地将员工工号解析为 `employeeId`。
