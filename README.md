@@ -20,14 +20,21 @@
         "git+https://github.com/Sherryruirui/mcp_test.git",
         "moka-leave-balance-mcp",
         "--host", "core.mokahr.com",
-        "--openapi-host", "api.mokahr.com"
+        "--openapi-host", "api.mokahr.com",
+        "--ent-code", "你的 entCode",
+        "--api-key", "你的 apiKey",
+        "--private-key", "你的 privateKey"
       ]
     }
   }
 }
 ```
 
-OpenAPI 鉴权参数不放启动参数里，每次调用工具时传入，便于不同租户灵活切换。
+如果以后拿到了 `apiCode`，也可以额外加：
+
+```text
+--api-code 你的 apiCode
+```
 
 员工端工具调用时传入：
 
@@ -42,19 +49,14 @@ OpenAPI 鉴权参数不放启动参数里，每次调用工具时传入，便于
 
 完整浏览器 Cookie 也可以，MCP 会自动把 `;` 后的空格规范化。
 
-OpenAPI 工具调用时不传 cookie，传 OpenAPI 鉴权参数、员工标识和业务参数：
+OpenAPI 工具调用时不传 cookie，传员工标识和业务参数即可：
 
 ```json
 {
-  "entCode": "your_ent_code",
-  "apiKey": "your_api_key",
-  "privateKey": "-----BEGIN PRIVATE KEY-----\n...",
   "employeeNo": "Moka0003961",
   "payrollMonth": "2026-04"
 }
 ```
-
-`apiCode` 和 `userName` 是可选工具参数；如果你的租户没有 `apiCode`，不传即可。
 
 如果返回 `authContextError: true`，或者错误中出现 `code=100007, msg=获取用户信息失败`，说明当前 Cookie 不是可用的 Moka 登录态，后端无法识别当前用户。此时不要继续换工号，应重新从 Chrome 开发者工具 Network 里复制 `core.mokahr.com` 请求头中的完整 `Cookie`，更新工具参数后重试；至少需要有效的 `moka-jwt` 和 `moka-uid`。
 
@@ -110,6 +112,7 @@ OpenAPI：
 身份与配置：
 
 - `query_current_user`：查询当前 Cookie 对应的登录用户/员工身份。
+- `diagnose_moka_session`：诊断当前 Cookie、员工身份、工号解析和员工自助入口配置是否满足稳定查询条件。
 - `diagnose_moka_session`：诊断当前 Cookie、员工身份、工号解析和员工自助入口配置是否满足稳定查询条件。
 - `check_employee_self_service_capability`：查询员工自助入口是否开放，例如“我的薪酬”“社保公积金”“假期”。
 - `check_salary_self_service_enabled`：专门检查“我的薪酬/工资条/薪资”入口是否可见。
