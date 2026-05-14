@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
-import random
 import ssl
-import string
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -14,16 +10,12 @@ from dataclasses import dataclass
 from datetime import date as date_type
 from typing import Any
 
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
 from mcp.server.fastmcp import FastMCP
 
 MCP_NAME = "moka-employee-self-service"
 DEFAULT_HOST = "core.mokahr.com"
-DEFAULT_OPENAPI_HOST = "api.mokahr.com"
 SUCCESS_CODES = {0, "0", 200, "200", "00000", 1000000, "1000000"}
 AUTH_CONTEXT_ERROR_CODES = {100007, "100007"}
-EMPLOYEE_CONTEXT_ERROR_CODES = {100000, "100000"}
 
 PATH_CURRENT_USER = "/api/aggregate/employee/getUserInfo"
 PATH_LEAVE_BALANCE = "/api/abs/account/v2/account/pc/balanceList"
@@ -188,14 +180,8 @@ mcp = FastMCP(MCP_NAME)
 @dataclass
 class ServerConfig:
     host: str = DEFAULT_HOST
-    openapi_host: str = DEFAULT_OPENAPI_HOST
     cookie: str | None = None
     authorization: str | None = None
-    ent_code: str | None = None
-    api_code: str | None = None
-    api_key: str | None = None
-    user_name: str | None = None
-    private_key: str | None = None
 
 
 CONFIG = ServerConfig()
@@ -204,25 +190,13 @@ CONFIG = ServerConfig()
 def _configure_from_args() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--openapi-host", default=DEFAULT_OPENAPI_HOST)
     parser.add_argument("--cookie", nargs="+")
     parser.add_argument("--authorization")
-    parser.add_argument("--ent-code")
-    parser.add_argument("--api-code")
-    parser.add_argument("--api-key")
-    parser.add_argument("--user-name")
-    parser.add_argument("--private-key", nargs="+")
     args, _ = parser.parse_known_args()
 
     CONFIG.host = args.host
-    CONFIG.openapi_host = args.openapi_host
     CONFIG.cookie = _normalize_cookie_arg(args.cookie)
     CONFIG.authorization = args.authorization
-    CONFIG.ent_code = args.ent_code
-    CONFIG.api_code = args.api_code
-    CONFIG.api_key = args.api_key
-    CONFIG.user_name = args.user_name
-    CONFIG.private_key = " ".join(args.private_key) if args.private_key else None
 
 
 def _normalize_cookie_arg(value: str | list[str] | None) -> str | None:
@@ -249,181 +223,6 @@ def _auth_headers(cookie: str | list[str] | None = None, authorization: str | No
     if resolved_authorization:
         headers["Authorization"] = resolved_authorization
     return headers
-
-
-def _required_openapi_credentials(
-    user_name: str | None,
-    ent_code: str | None,
-    api_code: str | None,
-    api_key: str | None,
-    private_key: str | None = None,
-) -> dict[str, Any] | None:
-    missing: list[str] = []
-    _ = user_name
-    if not (ent_code or CONFIG.ent_code):
-        missing.append("entCode")
-    if not (api_code or CONFIG.api_code):
-        missing.append("apiCode")
-    if not (api_key or CONFIG.api_key):
-        missing.append("apiKey")
-    if not (private_key or CONFIG.private_key):
-        missing.append("privateKey")
-    if not missing:
-        return None
-    return _missing_params_error(
-        "openapi",
-        missing,
-        "缺少 Moka OpenAPI 鉴权参数。OpenAPI 不使用 cookie，需要传 entCode、apiCode、apiKey、privateKey；部分权限接口还需要 userName。",
-        examples=[{"entCode": "your_ent_code", "apiCode": "your_api_code", "apiKey": "your_api_key", "privateKey": "-----BEGIN PRIVATE KEY-----\\n..."}],
-    )
-
-
-def _openapi_nonce(length: int = 8) -> str:
-    alphabet = string.ascii_letters + string.digits
-    return "".join(random.choice(alphabet) for _ in range(length))
-
-
-def _normalize_private_key(private_key: str | None) -> str | None:
-    if not private_key:
-        return None
-    text = private_key.strip().replace("\\n", "\n")
-    if "BEGIN" in text:
-        return text
-    return f"-----BEGIN PRIVATE KEY-----\n{text}\n-----END PRIVATE KEY-----"
-
-
-def _openapi_sign_params(params: dict[str, Any], private_key: str) -> str:
-    normalized_key = _normalize_private_key(private_key)
-    if not normalized_key:
-        raise ValueError("privateKey 不能为空")
-    key = serialization.load_pem_private_key(normalized_key.encode("utf-8"), password=None)
-    sign_text = "&".join(f"{key}={params[key]}" for key in sorted(params) if key != "sign" and params[key] is not None).encode("utf-8")
-    signature = key.sign(sign_text, padding.PKCS1v15(), hashes.MD5())
-    return base64.b64encode(signature).decode("utf-8")
-
-
-def _openapi_auth(
-    ent_code: str,
-    api_code: str,
-    api_key: str,
-    private_key: str,
-    user_name: str | None = None,
-) -> tuple[dict[str, str], dict[str, Any]]:
-    timestamp = int(time.time() * 1000)
-    nonce = _openapi_nonce()
-    params: dict[str, Any] = {
-        "entCode": ent_code,
-        "apiCode": api_code,
-        "timestamp": timestamp,
-        "nonce": nonce,
-    }
-    if user_name:
-        params["userName"] = user_name
-    params["sign"] = _openapi_sign_params(params, private_key)
-    basic = base64.b64encode(f"{api_key}:".encode("utf-8")).decode("utf-8")
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "moka-openapi-mcp/0.3",
-        "Authorization": f"Basic {basic}",
-    }
-    return headers, params
-
-
-def _openapi_extract_response(result: dict[str, Any]) -> dict[str, Any]:
-    if not result.get("ok"):
-        return result
-    response = result.get("response")
-    if isinstance(response, dict):
-        code = response.get("code")
-        if code in SUCCESS_CODES or response.get("success") is True:
-            return {"ok": True, "data": response.get("data", response), "raw": response}
-        return {"ok": False, "error": f"OpenAPI failed: code={code}, msg={response.get('msg') or response.get('message') or ''}", "raw": response}
-    return {"ok": True, "data": response, "raw": response}
-
-
-def _request_openapi(
-    *,
-    host: str,
-    path: str,
-    payload: dict[str, Any] | None,
-    ent_code: str,
-    user_name: str | None,
-    api_code: str,
-    api_key: str,
-    private_key: str,
-) -> dict[str, Any]:
-    body = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    try:
-        headers, params = _openapi_auth(ent_code, api_code, api_key, private_key, user_name=user_name)
-    except Exception as exc:
-        return {"ok": False, "error": f"OpenAPI 签名生成失败：{exc}"}
-    query = urllib.parse.urlencode(params)
-    url = f"https://{host}{path}?{query}"
-    request = urllib.request.Request(url=url, data=body, method="POST")
-    for key, value in headers.items():
-        request.add_header(key, value)
-    try:
-        with urllib.request.urlopen(request, context=ssl.create_default_context(), timeout=30) as resp:
-            text = resp.read().decode("utf-8", errors="replace")
-            try:
-                data: Any = json.loads(text)
-            except json.JSONDecodeError:
-                data = text
-            return {
-                "ok": True,
-                "status": resp.status,
-                "contentType": resp.headers.get("content-type"),
-                "response": data,
-                "url": url,
-            }
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")[:2000]
-        return {"ok": False, "status": exc.code, "error": str(exc), "body": error_body, "url": url}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc), "url": url}
-
-
-def _call_openapi(
-    *,
-    path: str,
-    payload: dict[str, Any] | None = None,
-    userName: str | None = None,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    missing = _required_openapi_credentials(userName, entCode, apiCode, apiKey, privateKey)
-    if missing:
-        return missing
-    resolved_ent_code = entCode or CONFIG.ent_code
-    resolved_user_name = userName or CONFIG.user_name
-    resolved_api_code = apiCode or CONFIG.api_code
-    resolved_api_key = apiKey or CONFIG.api_key
-    resolved_private_key = privateKey or CONFIG.private_key
-    if not resolved_ent_code or not resolved_api_code or not resolved_api_key or not resolved_private_key:
-        return {"ok": False, "error": "缺少 OpenAPI 鉴权参数。"}
-    result = _openapi_extract_response(
-        _request_openapi(
-            host=openapiHost or CONFIG.openapi_host,
-            path=path,
-            payload=payload or {},
-            ent_code=resolved_ent_code,
-            user_name=resolved_user_name,
-            api_code=resolved_api_code,
-            api_key=resolved_api_key,
-            private_key=resolved_private_key,
-        )
-    )
-    if not result.get("ok"):
-        return result
-    output = {"ok": True, "data": result.get("data"), "sourceEndpoint": path}
-    if raw:
-        output["raw"] = result.get("raw")
-    return output
 
 
 def _request_json(
@@ -500,24 +299,6 @@ def _response_has_auth_context_error(response: Any) -> bool:
     return False
 
 
-def _message_has_employee_context_error(message: str) -> bool:
-    return (
-        "获取员工信息失败" in message
-        or "无法从当前登录态解析当前员工" in message
-        or "当前用户信息中未找到 employeeId" in message
-    )
-
-
-def _response_has_employee_context_error(response: Any) -> bool:
-    if isinstance(response, dict):
-        code = response.get("code")
-        message = str(response.get("msg") or response.get("message") or response.get("error") or "")
-        return code in EMPLOYEE_CONTEXT_ERROR_CODES and _message_has_employee_context_error(message)
-    if isinstance(response, str):
-        return _message_has_employee_context_error(response)
-    return False
-
-
 def _auth_context_error_response(
     *,
     raw: Any,
@@ -543,42 +324,11 @@ def _auth_context_error_response(
     return output
 
 
-def _employee_context_error_response(
-    *,
-    raw: Any,
-    url: str | None = None,
-    status: int | None = None,
-    content_type: str | None = None,
-) -> dict[str, Any]:
-    output: dict[str, Any] = {
-        "ok": False,
-        "employeeContextError": True,
-        "error": "当前登录态可用，但后端无法解析当前员工身份或当前接口要求的员工上下文。请确认 Cookie 来自 Moka 员工端已登录账号，且该账号已绑定员工档案；如果要查询指定员工，请同时传 employeeNo，必要时先调用 diagnose_moka_session。",
-        "askUserFor": ["cookie", "employeeNo"],
-        "nextAction": "先调用 diagnose_moka_session 检查当前用户、员工解析和员工自助配置；如果诊断里 currentUser 正常但 currentEmployee 不正常，需要换成员工本人或有员工身份的账号 Cookie。",
-        "raw": raw,
-    }
-    if status is not None:
-        output["status"] = status
-    if content_type:
-        output["contentType"] = content_type
-    if url:
-        output["url"] = url
-    return output
-
-
 def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
     if not result.get("ok"):
         body = result.get("body")
         if _response_has_auth_context_error(body) or _response_has_auth_context_error(result.get("error")):
             return _auth_context_error_response(
-                raw=body or result,
-                url=result.get("url"),
-                status=result.get("status"),
-                content_type=result.get("contentType"),
-            )
-        if _response_has_employee_context_error(body) or _response_has_employee_context_error(result.get("error")):
-            return _employee_context_error_response(
                 raw=body or result,
                 url=result.get("url"),
                 status=result.get("status"),
@@ -599,25 +349,11 @@ def _extract_data(result: dict[str, Any]) -> dict[str, Any]:
                 status=result.get("status"),
                 content_type=result.get("contentType"),
             )
-        if _response_has_employee_context_error(response):
-            return _employee_context_error_response(
-                raw=response,
-                url=result.get("url"),
-                status=result.get("status"),
-                content_type=result.get("contentType"),
-            )
         return {"ok": False, "error": f"API failed: code={code}, msg={response.get('msg', '')}", "raw": response}
     if isinstance(response, str):
         preview = response[:500]
         if _response_has_auth_context_error(response):
             return _auth_context_error_response(
-                raw=response[:2000],
-                url=result.get("url"),
-                status=result.get("status"),
-                content_type=result.get("contentType"),
-            )
-        if _response_has_employee_context_error(response):
-            return _employee_context_error_response(
                 raw=response[:2000],
                 url=result.get("url"),
                 status=result.get("status"),
@@ -1189,86 +925,6 @@ def query_current_user(
         authorization=authorization,
         raw=raw,
     ) | {"request": {"entId": int(entId), "buId": int(buId)}}
-
-
-@mcp.tool()
-def diagnose_moka_session(
-    entId: int,
-    buId: int,
-    cookie: str,
-    employeeNo: str | None = None,
-    capability: str | None = None,
-    keyword: str | None = None,
-    host: str | None = None,
-    authorization: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """诊断当前 Cookie 是否能支撑员工自助查询：登录态、员工身份、工号解析、自助功能可见性。"""
-
-    missing = _require_cookie(cookie)
-    if missing:
-        return missing
-
-    resolved_host = host or CONFIG.host
-    current_user = _raw_endpoint_output(
-        host=resolved_host,
-        method="POST",
-        path=PATH_CURRENT_USER,
-        payload={},
-        cookie=cookie,
-        authorization=authorization,
-        raw=raw,
-    )
-    current_employee = _current_employee(resolved_host, cookie, authorization)
-    employee_lookup: dict[str, Any] | None = None
-    if employeeNo:
-        employee_lookup = _resolve_employee_by_business_search(resolved_host, employeeNo, cookie, authorization)
-
-    capability_check: dict[str, Any] | None = None
-    resolved_keywords: list[str] = []
-    if capability:
-        resolved_keywords = list(BUSINESS_CAPABILITY_KEYWORDS.get(capability, (capability,)))
-    elif keyword:
-        resolved_keywords = [keyword]
-    if resolved_keywords:
-        capability_check = _check_capability_keywords(resolved_host, cookie, authorization, resolved_keywords)
-
-    blockers: list[str] = []
-    if current_user.get("authContextError"):
-        blockers.append("cookie 无法识别当前用户，请重新复制 core.mokahr.com 请求头中的完整 Cookie。")
-    if current_employee.get("employeeContextError") or not current_employee.get("ok"):
-        blockers.append("当前登录态无法解析当前员工身份，请确认账号已绑定员工档案，且 Cookie 来自员工端已登录账号。")
-    if employee_lookup and not employee_lookup.get("ok"):
-        blockers.append("指定 employeeNo 未能解析为 employeeId，请确认工号、账号权限或改传可查询范围内的员工。")
-    if capability_check and capability_check.get("ok") and not capability_check.get("visible"):
-        blockers.append("员工自助配置未开放该业务入口，MCP 应阻断对应敏感信息查询。")
-    if capability_check and not capability_check.get("ok"):
-        blockers.append("员工自助配置查询失败，MCP 不应继续查询敏感信息。")
-
-    output: dict[str, Any] = {
-        "ok": not blockers,
-        "diagnosis": "可继续调用业务查询工具。" if not blockers else "当前会话不满足稳定查询条件，请先处理 blockers。",
-        "blockers": blockers,
-        "request": {
-            "entId": int(entId),
-            "buId": int(buId),
-            "employeeNo": employeeNo,
-            "capability": capability,
-            "keyword": keyword,
-        },
-        "currentUser": current_user,
-        "currentEmployee": current_employee,
-    }
-    if employee_lookup is not None:
-        output["employeeLookup"] = employee_lookup
-    if capability_check is not None:
-        output["capabilityCheck"] = capability_check
-    if not raw:
-        for key in ("currentUser", "currentEmployee", "employeeLookup", "capabilityCheck"):
-            value = output.get(key)
-            if isinstance(value, dict):
-                value.pop("raw", None)
-    return output
 
 
 @mcp.tool()
@@ -2718,264 +2374,6 @@ def check_salary_self_service_enabled(
         result.pop("allItems", None)
     result["request"] = {"entId": int(entId), "buId": int(buId), "keywords": list(SALARY_KEYWORDS)}
     return result
-
-
-def _openapi_payload(**kwargs: Any) -> dict[str, Any]:
-    return {key: value for key, value in kwargs.items() if value is not None}
-
-
-def _openapi_unverified_path_warning(path: str, label: str) -> dict[str, Any]:
-    return {
-        "openapiPathVerification": "unverified",
-        "warning": f"{label} 的 OpenAPI 路径来自当前资料整理，未使用真实 OpenAPI 凭证做端到端验证；如果返回 404/签名外错误，请以 people.mokahr.com 文档对应章节的请求地址为准。",
-        "path": path,
-    }
-
-
-@mcp.tool()
-def call_moka_openapi(
-    path: str,
-    payload: dict[str, Any] | None = None,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    userName: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """通用调用 Moka OpenAPI。用于官方文档已有但 MCP 尚未封装成专用工具的接口。"""
-
-    return _call_openapi(
-        path=path,
-        payload=payload or {},
-        entCode=entCode,
-        apiCode=apiCode,
-        apiKey=apiKey,
-        privateKey=privateKey,
-        userName=userName,
-        openapiHost=openapiHost,
-        raw=raw,
-    )
-
-
-@mcp.tool()
-def openapi_query_leave_balance(
-    employeeNo: str | None = None,
-    employeeId: int | None = None,
-    pageNum: int = 1,
-    pageSize: int = 20,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    userName: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """OpenAPI 查询假期余额。优先传 employeeNo；不需要 cookie。"""
-
-    if not employeeNo and employeeId is None:
-        return _missing_params_error("openapi_query_leave_balance", ["employeeNo"], "缺少员工标识，建议传 employeeNo。")
-    path = "/api-platform/hcm/oapi/v1/attendance/leave/balance"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, pageNum=pageNum, pageSize=pageSize)
-    result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
-    result.setdefault("notice", _openapi_unverified_path_warning(path, "假期余额查询"))
-    return result
-
-
-@mcp.tool()
-def openapi_query_leave_records(
-    employeeNo: str | None = None,
-    employeeId: int | None = None,
-    startDate: str | None = None,
-    endDate: str | None = None,
-    pageNum: int = 1,
-    pageSize: int = 20,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    userName: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """OpenAPI 查询请假记录；不需要 cookie。"""
-
-    path = "/api-platform/hcm/oapi/v1/attendance/leave/record"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, startDate=startDate, endDate=endDate, pageNum=pageNum, pageSize=pageSize)
-    result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
-    result.setdefault("notice", _openapi_unverified_path_warning(path, "请假记录查询"))
-    return result
-
-
-@mcp.tool()
-def openapi_query_employee_project_groups(
-    employeeNo: str | None = None,
-    employeeId: int | None = None,
-    pageNum: int = 1,
-    pageSize: int = 20,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    userName: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """OpenAPI 获取员工所属项目组数据；不需要 cookie。"""
-
-    path = "/api-platform/hcm/oapi/v1/employee/project/group"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, pageNum=pageNum, pageSize=pageSize)
-    result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
-    result.setdefault("notice", _openapi_unverified_path_warning(path, "员工所属项目组数据"))
-    return result
-
-
-@mcp.tool()
-def openapi_query_salary_archive(
-    employeeNo: str | None = None,
-    employeeId: int | None = None,
-    pageNum: int = 1,
-    pageSize: int = 20,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    userName: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """OpenAPI 查询薪资档案；不需要 cookie。"""
-
-    path = "/api-platform/hcm/oapi/v1/salary/archive"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, pageNum=pageNum, pageSize=pageSize)
-    result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
-    result.setdefault("notice", _openapi_unverified_path_warning(path, "薪资档案查询"))
-    return result
-
-
-@mcp.tool()
-def openapi_query_payroll_result(
-    employeeNo: str | None = None,
-    employeeId: int | None = None,
-    payrollMonth: str | None = None,
-    pageNum: int = 1,
-    pageSize: int = 20,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    userName: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """OpenAPI 查询工资/薪酬核算结果；不需要 cookie。"""
-
-    path = "/api-platform/hcm/oapi/v1/salary/payroll/result"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, payrollMonth=payrollMonth, pageNum=pageNum, pageSize=pageSize)
-    result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
-    result.setdefault("notice", _openapi_unverified_path_warning(path, "工资/薪酬核算结果查询"))
-    return result
-
-
-@mcp.tool()
-def openapi_query_social_fund_archive(
-    employeeNo: str | None = None,
-    employeeId: int | None = None,
-    pageNum: int = 1,
-    pageSize: int = 20,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    userName: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """OpenAPI 查询社保公积金档案；不需要 cookie。"""
-
-    path = "/api-platform/hcm/oapi/v1/salary/social-fund/archive"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, pageNum=pageNum, pageSize=pageSize)
-    result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
-    result.setdefault("notice", _openapi_unverified_path_warning(path, "社保公积金档案查询"))
-    return result
-
-
-@mcp.tool()
-def openapi_query_personal_tax(
-    employeeNo: str | None = None,
-    employeeId: int | None = None,
-    taxMonth: str | None = None,
-    pageNum: int = 1,
-    pageSize: int = 20,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    userName: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """OpenAPI 查询个税报送/个税记录；不需要 cookie。"""
-
-    path = "/api-platform/hcm/oapi/v1/salary/tax/report"
-    payload = _openapi_payload(employeeNo=employeeNo, employeeId=employeeId, taxMonth=taxMonth, pageNum=pageNum, pageSize=pageSize)
-    result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
-    result.setdefault("notice", _openapi_unverified_path_warning(path, "个税记录查询"))
-    return result
-
-
-@mcp.tool()
-def openapi_query_incentive_activity(
-    activityId: int | None = None,
-    employeeNo: str | None = None,
-    employeeId: int | None = None,
-    pageNum: int = 1,
-    pageSize: int = 20,
-    entCode: str | None = None,
-    apiCode: str | None = None,
-    apiKey: str | None = None,
-    privateKey: str | None = None,
-    userName: str | None = None,
-    openapiHost: str | None = None,
-    raw: bool = False,
-) -> dict[str, Any]:
-    """OpenAPI 查询奖金/调薪激励活动或员工明细；不需要 cookie。"""
-
-    path = "/api-platform/hcm/oapi/v1/salary/incentive/activity"
-    payload = _openapi_payload(activityId=activityId, employeeNo=employeeNo, employeeId=employeeId, pageNum=pageNum, pageSize=pageSize)
-    result = _call_openapi(path=path, payload=payload, entCode=entCode, apiCode=apiCode, apiKey=apiKey, privateKey=privateKey, userName=userName, openapiHost=openapiHost, raw=raw)
-    result.setdefault("notice", _openapi_unverified_path_warning(path, "奖金/调薪激励活动查询"))
-    return result
-
-
-@mcp.tool()
-def list_openapi_migration_status() -> dict[str, Any]:
-    """查看当前 MCP 中内部接口迁移到 OpenAPI 的实现状态。"""
-
-    return {
-        "ok": True,
-        "implementedOpenApiTools": [
-            "call_moka_openapi",
-            "openapi_query_leave_balance",
-            "openapi_query_leave_records",
-            "openapi_query_employee_project_groups",
-            "openapi_query_salary_archive",
-            "openapi_query_payroll_result",
-            "openapi_query_social_fund_archive",
-            "openapi_query_personal_tax",
-            "openapi_query_incentive_activity",
-        ],
-        "notFullyMigrated": [
-            {"feature": "员工端自助可见性配置", "reason": "目前只找到内部员工端配置接口；OpenAPI 是否开放需以官方文档为准。"},
-            {"feature": "工资条详情/隐藏状态/展示配置", "reason": "当前实现来自内部薪酬员工端接口；需补充官方 OpenAPI 请求地址后才能稳定迁移。"},
-            {"feature": "审批待办/审批详情", "reason": "当前实现来自内部审批平台接口；需补充官方 OpenAPI 请求地址。"},
-            {"feature": "当前登录用户/当前员工", "reason": "OpenAPI 是应用鉴权，不等价于 cookie 登录态，一般应改为按 employeeNo/employeeId 查询。"},
-        ],
-        "authRequired": ["entCode", "apiCode", "apiKey", "privateKey"],
-        "note": "OpenAPI 工具不使用 cookie。专用工具中的 path 未用真实租户凭证端到端验证；如路径不符，可先用 call_moka_openapi 传官方文档请求地址调用。",
-    }
 
 
 def main() -> None:
