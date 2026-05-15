@@ -27,6 +27,7 @@ PATH_LEAVE_SEND_RECORDS = "/api/abs/account/v2/account/pc/sendRecordList"
 PATH_LEAVE_USE_RECORDS = "/api/abs/account/v2/account/pc/useRecordList"
 PATH_CLOCK_RECORDS = "/api/abs/clock/v1/clock/getRecordList"
 PATH_ATTENDANCE_CALENDAR_DETAIL = "/api/abs/attendance/calendar/v1/detail"
+PATH_ATTENDANCE_CALENDAR_MOBILE_LIST = "/api/abs/attendance/calendar/v1/m/list"
 PATH_ATTENDANCE_CALENDAR_LIST = "/api/abs/attendance/calendar/v1/list"
 PATH_ATTENDANCE_CALENDAR_QUERY_BY_DAY = "/api/abs/attendance/calendar/v1/queryByDay"
 PATH_ATTENDANCE_CALENDAR_PROFILE = "/api/statistics/v1/abs/profile/attendance/calendar"
@@ -130,6 +131,7 @@ ENDPOINT_CAPABILITIES = {
     PATH_LEAVE_USE_RECORDS: "attendance",
     PATH_CLOCK_RECORDS: "attendance",
     PATH_ATTENDANCE_CALENDAR_DETAIL: "attendance",
+    PATH_ATTENDANCE_CALENDAR_MOBILE_LIST: "attendance",
     PATH_ATTENDANCE_CALENDAR_LIST: "attendance",
     PATH_ATTENDANCE_CALENDAR_QUERY_BY_DAY: "attendance",
     PATH_ATTENDANCE_CALENDAR_PROFILE: "attendance",
@@ -1531,11 +1533,29 @@ def query_attendance_calendar(
             ],
         )
 
+    mobile_body = _merge_payload({"employeeId": employee["employeeId"], "year": resolved_year, "month": resolved_month}, payload)
+    for key in ("monthNumber", "clockInDate", "date", "inApproval"):
+        mobile_body.pop(key, None)
+    mobile_body = {key: value for key, value in mobile_body.items() if value is not None}
+    mobile_result = _raw_endpoint_output(
+        host=resolved_host,
+        method="POST",
+        path=PATH_ATTENDANCE_CALENDAR_MOBILE_LIST,
+        payload=mobile_body,
+        cookie=cookie,
+        authorization=authorization,
+        raw=raw,
+    )
+    if mobile_result.get("ok") or not (_is_auth_context_error(mobile_result) or _is_employee_context_error(mobile_result)):
+        return mobile_result
+
     path = PATH_ATTENDANCE_CALENDAR_LIST
     body = _merge_payload({"employeeId": employee["employeeId"], "year": resolved_year, "month": resolved_month, "inApproval": False}, payload)
     body = {key: value for key, value in body.items() if value is not None}
     result = _raw_endpoint_output(host=resolved_host, method="POST", path=path, payload=body, cookie=cookie, authorization=authorization, raw=raw)
     if result.get("ok") or not _is_employee_context_error(result):
+        result["fallbackFrom"] = PATH_ATTENDANCE_CALENDAR_MOBILE_LIST
+        result["mobileListError"] = mobile_result
         return result
 
     fallback_day = f"{resolved_year:04d}-{resolved_month:02d}-01"
@@ -1553,6 +1573,7 @@ def query_attendance_calendar(
         raw=raw,
     )
     fallback["fallbackFrom"] = PATH_ATTENDANCE_CALENDAR_LIST
+    fallback["mobileListError"] = mobile_result
     fallback["fallbackReason"] = "月出勤接口返回员工上下文错误，已改用 queryByDay 查询该月日历。"
     fallback["fallbackDay"] = fallback_day
     if not fallback.get("ok"):
@@ -1566,6 +1587,7 @@ def query_attendance_calendar(
             raw=raw,
         )
         daily["fallbackFrom"] = PATH_ATTENDANCE_CALENDAR_LIST
+        daily["mobileListError"] = mobile_result
         daily["queryByDayError"] = fallback
         daily["originalError"] = result
         return daily

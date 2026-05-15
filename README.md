@@ -97,7 +97,7 @@
 - `query_leave_send_records`：查询发假记录。
 - `query_leave_use_records`：查询假期使用明细。
 - `query_clock_records`：查询打卡记录。
-- `query_attendance_calendar`：查询考勤日历日详情或月列表；月接口如果返回员工上下文错误，会自动 fallback 到 `/api/abs/attendance/calendar/v1/queryByDay`，仍不可用时逐日调用日详情接口汇总该月日历。
+- `query_attendance_calendar`：查询考勤日历日详情或月列表；月查询优先使用员工端 `/api/abs/attendance/calendar/v1/m/list`，若不可用再 fallback 到 PC 月接口、`queryByDay`，仍不可用时逐日调用日详情接口汇总该月日历。
 - `query_profile_attendance_calendar`：查询档案页考勤日历。
 
 出勤日历参数说明：
