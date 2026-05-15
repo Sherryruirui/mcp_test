@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import calendar
 import json
 import ssl
 import urllib.error
@@ -27,6 +28,7 @@ PATH_LEAVE_USE_RECORDS = "/api/abs/account/v2/account/pc/useRecordList"
 PATH_CLOCK_RECORDS = "/api/abs/clock/v1/clock/getRecordList"
 PATH_ATTENDANCE_CALENDAR_DETAIL = "/api/abs/attendance/calendar/v1/detail"
 PATH_ATTENDANCE_CALENDAR_LIST = "/api/abs/attendance/calendar/v1/list"
+PATH_ATTENDANCE_CALENDAR_QUERY_BY_DAY = "/api/abs/attendance/calendar/v1/queryByDay"
 PATH_ATTENDANCE_CALENDAR_PROFILE = "/api/statistics/v1/abs/profile/attendance/calendar"
 PATH_EMP_ACCOUNT_INFO = "/api/abs/account/v1/account/app/empAccountInfo"
 PATH_LEAVE_TYPES = "/api/abs/account/v1/leave/query_leave_types"
@@ -129,6 +131,7 @@ ENDPOINT_CAPABILITIES = {
     PATH_CLOCK_RECORDS: "attendance",
     PATH_ATTENDANCE_CALENDAR_DETAIL: "attendance",
     PATH_ATTENDANCE_CALENDAR_LIST: "attendance",
+    PATH_ATTENDANCE_CALENDAR_QUERY_BY_DAY: "attendance",
     PATH_ATTENDANCE_CALENDAR_PROFILE: "attendance",
     PATH_EMP_ACCOUNT_INFO: "attendance",
     PATH_LEAVE_TYPES: "attendance",
@@ -533,6 +536,64 @@ def _is_auth_context_error(result: dict[str, Any]) -> bool:
     code = _api_error_code(result)
     message = str(result.get("error") or "")
     return bool(result.get("authContextError")) or code in AUTH_CONTEXT_ERROR_CODES or _message_has_auth_context_error(message)
+
+
+def _is_employee_context_error(result: dict[str, Any]) -> bool:
+    code = _api_error_code(result)
+    message = str(result.get("error") or "")
+    return bool(result.get("employeeContextError")) or (
+        code in EMPLOYEE_CONTEXT_ERROR_CODES and _message_has_employee_context_error(message)
+    )
+
+
+def _query_attendance_calendar_by_days(
+    *,
+    host: str,
+    employee_id: int,
+    year: int,
+    month: int,
+    cookie: str | list[str] | None,
+    authorization: str | None,
+    raw: bool,
+) -> dict[str, Any]:
+    _, days_in_month = calendar.monthrange(year, month)
+    days: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for day in range(1, days_in_month + 1):
+        clock_in_date = f"{year:04d}-{month:02d}-{day:02d}"
+        result = _raw_endpoint_output(
+            host=host,
+            method="POST",
+            path=PATH_ATTENDANCE_CALENDAR_DETAIL,
+            payload={"employeeId": employee_id, "clockInDate": clock_in_date},
+            cookie=cookie,
+            authorization=authorization,
+            raw=raw,
+            skip_capability_guard=True,
+        )
+        if result.get("ok"):
+            days.append({"date": clock_in_date, "data": result.get("data")})
+            continue
+
+        errors.append({"date": clock_in_date, "error": result})
+        if _is_auth_context_error(result) or _is_employee_context_error(result):
+            return result | {
+                "fallbackFrom": PATH_ATTENDANCE_CALENDAR_LIST,
+                "fallbackReason": "月出勤接口不可用，逐日查询时登录态或员工上下文也不可用。",
+                "partialDays": days,
+                "partialErrors": errors,
+            }
+
+    return {
+        "ok": True,
+        "data": days,
+        "sourceEndpoint": PATH_ATTENDANCE_CALENDAR_DETAIL,
+        "fallbackFrom": PATH_ATTENDANCE_CALENDAR_LIST,
+        "fallbackReason": "月出勤接口和 queryByDay 不可用，已逐日调用日详情接口汇总该月日历。",
+        "fallbackMode": "dailyDetail",
+        "month": f"{year:04d}-{month:02d}",
+        "errors": errors,
+    }
 
 
 def _current_employee(
@@ -1473,7 +1534,42 @@ def query_attendance_calendar(
     path = PATH_ATTENDANCE_CALENDAR_LIST
     body = _merge_payload({"employeeId": employee["employeeId"], "year": resolved_year, "month": resolved_month, "inApproval": False}, payload)
     body = {key: value for key, value in body.items() if value is not None}
-    return _raw_endpoint_output(host=resolved_host, method="POST", path=path, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+    result = _raw_endpoint_output(host=resolved_host, method="POST", path=path, payload=body, cookie=cookie, authorization=authorization, raw=raw)
+    if result.get("ok") or not _is_employee_context_error(result):
+        return result
+
+    fallback_day = f"{resolved_year:04d}-{resolved_month:02d}-01"
+    fallback_payload = _merge_payload({"employeeId": employee["employeeId"], "day": fallback_day, "inApproval": False}, payload)
+    for key in ("year", "month", "monthNumber", "clockInDate", "date"):
+        fallback_payload.pop(key, None)
+    fallback_payload = {key: value for key, value in fallback_payload.items() if value is not None}
+    fallback = _raw_endpoint_output(
+        host=resolved_host,
+        method="POST",
+        path=PATH_ATTENDANCE_CALENDAR_QUERY_BY_DAY,
+        payload=fallback_payload,
+        cookie=cookie,
+        authorization=authorization,
+        raw=raw,
+    )
+    fallback["fallbackFrom"] = PATH_ATTENDANCE_CALENDAR_LIST
+    fallback["fallbackReason"] = "月出勤接口返回员工上下文错误，已改用 queryByDay 查询该月日历。"
+    fallback["fallbackDay"] = fallback_day
+    if not fallback.get("ok"):
+        daily = _query_attendance_calendar_by_days(
+            host=resolved_host,
+            employee_id=employee["employeeId"],
+            year=resolved_year,
+            month=resolved_month,
+            cookie=cookie,
+            authorization=authorization,
+            raw=raw,
+        )
+        daily["fallbackFrom"] = PATH_ATTENDANCE_CALENDAR_LIST
+        daily["queryByDayError"] = fallback
+        daily["originalError"] = result
+        return daily
+    return fallback
 
 
 @mcp.tool()
